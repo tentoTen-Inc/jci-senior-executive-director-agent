@@ -1,5 +1,5 @@
 """ホーム集約のテスト。"""
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -23,6 +23,11 @@ from tests.conftest import ADMIN_AUTH
 
 client = TestClient(main.app, headers=ADMIN_AUTH)
 NOW = datetime(2026, 6, 20, 10, 0)
+# test_home_endpoint は /api/home 経由（内部で実時刻 datetime.now() を使う）で
+# アサートするため、イベント日時をハードコードすると実行時刻の進行で過去になり
+# 「未来イベント」フィルタから外れて壊れる（time-bomb）。常に実行時刻より
+# 先の日付になるよう動的に決める。
+EVENT_START = datetime.now() + timedelta(days=5)
 
 
 def build_repo() -> InMemoryRepository:
@@ -31,7 +36,7 @@ def build_repo() -> InMemoryRepository:
     r.upsert_member(Member(member_id="m2", name="B"))  # 未連携
     r.upsert_event(Event(
         event_id="e1", type=EventType.例会, title="6月例会",
-        datetime_start=datetime(2026, 6, 25, 19, 0),
+        datetime_start=EVENT_START,
         target_scope=TargetScope(kind=TargetScopeKind.all),
         status=EventStatus.open,
     ))
