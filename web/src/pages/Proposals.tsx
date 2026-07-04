@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { Card } from "../components/Card";
 
-type FormatCheck = { passed: boolean; issues: string[] } | null;
-type LlmReview = { summary: string; points: string[]; concerns: string[] } | null;
+type FormatCheck = { passed: boolean; issues: string[]; checked_at?: string | null } | null;
+type LlmReview = { summary: string; points: string[]; concerns: string[]; reviewed_at?: string | null } | null;
 type SedApproval = { status: string; by: string | null; comment: string | null };
 type Proposal = {
   proposal_id: string;
@@ -30,14 +30,42 @@ const STAGES: { key: string; label: string }[] = [
   { key: "verified", label: "検証" },
 ];
 
+const COMMITTEE_MATRIX_STAGES = [
+  { key: "entry", label: "エントリー" },
+  { key: "submitted", label: "資料提出" },
+  { key: "other", label: "その他" },
+] as const;
+
+type MatrixGridRow = {
+  committee: string;
+  counts: Record<string, number>;
+  samples: Record<string, string[]>;
+  latest: Record<string, string | null>;
+};
+
+type MatrixResponse = {
+  committees: string[];
+  deadlines: { entry: string | null; submit: string | null; deliver: string | null };
+  proposals: Proposal[];
+  grid: MatrixGridRow[];
+};
+
 export default function Proposals() {
   const [items, setItems] = useState<Proposal[]>([]);
   const [sel, setSel] = useState<Proposal | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [form, setForm] = useState({ title: "", committee: "", content: "" });
   const [folderId, setFolderId] = useState("");
+  const [matrix, setMatrix] = useState<MatrixResponse | null>(null);
 
-  const load = () => api<Proposal[]>("/proposals").then(setItems).catch((e) => setMsg(e.message));
+  const load = () => {
+    api<Proposal[]>("/proposals")
+      .then(setItems)
+      .catch((e) => setMsg(e.message));
+    api<MatrixResponse>("/proposals/matrix")
+      .then(setMatrix)
+      .catch((e) => setMsg(e.message));
+  };
   useEffect(() => {
     load();
   }, []);
@@ -170,6 +198,47 @@ export default function Proposals() {
               ))}
             </tbody>
           </table>
+        </Card>
+      )}
+
+      {matrix && matrix.grid.length > 0 && (
+        <Card title="委員会 × 締切状態">
+          <div className="overflow-x-auto">
+            <table className="text-sm border-collapse">
+              <thead>
+                <tr className="border-t">
+                  <th className="text-left py-1 pr-3">委員会</th>
+                  {COMMITTEE_MATRIX_STAGES.map(({ key, label }) => (
+                    <th key={key} className="text-center py-1 px-3">
+                      {label}
+                      {matrix.deadlines[key as keyof typeof matrix.deadlines] && (
+                        <div className="text-xs font-normal text-slate-500">
+                          〆{new Date(matrix.deadlines[key as keyof typeof matrix.deadlines] as string).toLocaleDateString("ja-JP")}
+                        </div>
+                      )}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {matrix.grid.map((row) => (
+                  <tr key={row.committee}>
+                    <td className="py-1 pr-3">{row.committee}</td>
+                    {COMMITTEE_MATRIX_STAGES.map(({ key }) => {
+                      const count = row.counts[key] ?? 0;
+                      const sample = (row.samples[key] ?? []).join(" / ");
+                      return (
+                        <td key={key} className="text-center py-1 px-3 border-t">
+                          <div className="font-medium">{count} 件</div>
+                          {!!sample && <div className="text-xs text-slate-500 truncate">{sample}</div>}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Card>
       )}
 

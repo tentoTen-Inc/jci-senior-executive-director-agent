@@ -19,6 +19,7 @@ from .models import (
     ProposalStage,
     SedApproval,
 )
+from .proposal_matrix import build_proposal_matrix
 
 router = APIRouter(tags=["proposals"])
 
@@ -84,6 +85,13 @@ def import_drive(
             detail=f"created={summary.created} updated={summary.updated}",
         )
     return summary
+
+
+@router.get("/proposals/matrix")
+def proposal_matrix():
+    repo = get_repo()
+    proposals = repo.list_proposals(status=None)
+    return build_proposal_matrix(proposals)
 
 
 @router.get("/proposals/{proposal_id}")
