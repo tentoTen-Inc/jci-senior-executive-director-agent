@@ -24,16 +24,16 @@
 
 ## 2. go-live チェックリスト
 
-- [ ] `/health` が 200（`curl <URL>/health`）
-- [ ] LINE「Webhookの利用」が **ON**、「応答メッセージ」が **OFF**（自動応答競合回避）
-- [ ] Webhook 検証成功（LINE: `POST /v2/bot/channel/webhook/test`）
-- [ ] 既定催促ポリシー投入済み（`POST /admin/policies/seed`）
-- [ ] リッチメニュー登録済み（`scripts/setup_rich_menu.py`）
-- [ ] **実会員名簿を Firestore へ投入**（`scripts/import_roster.py … --upsert`）※実PII
-- [ ] 各会員へ**招待コード発行・配布**（`POST /admin/members/{id}/invite`）
-- [ ] 静音時間・レート上限の最終確認（`GET /admin/settings`）
-- [ ] テスト会員で 友だち追加→コード→出欠回答→集計 を実機確認
-- [ ] テスト用データ（test-endo 等）を削除
+- [x] `/health` が 200(`curl <URL>/health`)— 2026-07-09 確認済み(200)
+- [x] LINE「Webhookの利用」が **ON**、「応答メッセージ」が **OFF**(自動応答競合回避)— `GET /v2/bot/info` の `chatMode: "bot"` で確認済み(bot モード = 応答メッセージ機能は使われずWebhookのみで処理)
+- [x] Webhook 検証成功(LINE: `POST /v2/bot/channel/webhook/test`)— 2026-07-09 `success:true, statusCode:200` 確認済み
+- [x] 既定催促ポリシー投入済み(`POST /admin/policies/seed`)— `GET /admin/policies` で `rp_例会_default` / `rp_理事会_default` 既存確認済み(投入済み・再実行不要)
+- [x] リッチメニュー登録済み(`scripts/setup_rich_menu.py`)— `richmenu-d3da97f7f72fd22e4b45c5b6e9934f7c`(名前: jci-default)が全ユーザーのデフォルトに設定済みであることを `GET /v2/bot/richmenu/list` と `GET /v2/bot/user/all/richmenu` で確認済み
+- [ ] **実会員名簿を Firestore へ投入**(`scripts/import_roster.py … --upsert`)※実PII — 実ファイル(会員名簿.xlsx)が未提供のため未実施。ご本人にてローカル実行が必要
+- [ ] 各会員へ**招待コード発行・配布**(`POST /admin/members/{id}/invite`)— 名簿投入後、対象会員IDが確定してから実施
+- [x] 静音時間・レート上限の最終確認(`GET /admin/settings`)— 2026-07-09 確認済み: `kill_switch:false`, `quiet_hours 21:00-08:00 JST`, `rate_limit 3/日/人, 30/分(全体)`
+- [ ] テスト会員で 友だち追加→コード→出欠回答→集計 を実機確認 — 物理デバイス操作が必要なためご本人実施
+- [ ] テスト用データ(test-endo 等)を削除 — 現状 Firestore に `test-endo`(LINE連携済み)が残存。実機確認完了後に削除推奨
 
 ---
 
