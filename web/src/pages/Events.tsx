@@ -89,6 +89,24 @@ export default function Events() {
     URL.revokeObjectURL(url);
   }
 
+  async function downloadPackage() {
+    if (!sel) return;
+    const res = await fetch(`/api/events/${sel}/package?download=true`, {
+      credentials: "include",
+    });
+    if (!res.ok) {
+      setMsg("事前共有パッケージの作成に失敗しました。");
+      return;
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `package_${sel}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   const attByMember = Object.fromEntries(att.map((a) => [a.member_id, a.status]));
   const proxyByMember: Record<string, string | null> = Object.fromEntries(
     att.map((a) => [a.member_id, a.proxy_member_id])
@@ -148,6 +166,12 @@ export default function Events() {
             </button>
             <button className="text-xs bg-slate-200 text-navy rounded px-2 py-1" onClick={downloadCsv}>
               CSV出力
+            </button>
+            <button
+              className="text-xs bg-slate-200 text-navy rounded px-2 py-1"
+              onClick={downloadPackage}
+            >
+              事前共有パッケージ(md)
             </button>
           </div>
 

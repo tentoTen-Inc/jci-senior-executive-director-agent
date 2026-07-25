@@ -22,6 +22,7 @@ from .events import resolve_targets
 from .home import build_home
 from .invite import issue_invite
 from .kpi import attendance_trends, kpi_overview
+from .meeting_package import build_package
 from .members_view import attendance_history, invite_status
 from .models import (
     AttendanceStatus,
@@ -176,6 +177,22 @@ def export_attendances_csv(event_id: str):
             ",".join(r.value for r in att.absence_reasons) if att else "",
         ])
     return Response(content=buf.getvalue(), media_type="text/csv")
+
+
+@router.get("/events/{event_id}/package")
+def event_package(event_id: str, download: bool = False):
+    """事前共有パッケージ（目次付きMarkdown, F6-7）。"""
+    repo = get_repo()
+    event = repo.get_event(event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="event not found")
+    text = build_package(repo, event, now=datetime.now())
+    headers = (
+        {"Content-Disposition": f'attachment; filename="package_{event_id}.md"'}
+        if download
+        else {}
+    )
+    return Response(content=text, media_type="text/markdown; charset=utf-8", headers=headers)
 
 
 @router.post("/events/{event_id}/remind")
