@@ -23,8 +23,14 @@ type Summary = {
   unanswered: number;
   attendance_rate: number;
   counts: Record<string, number>;
+  present: number;
+  proxies: number;
+  present_with_proxies: number;
+  quorum: number | null;
+  quorum_met: boolean | null;
+  quorum_met_without_proxies: boolean | null;
 };
-type Attendance = { member_id: string; status: string };
+type Attendance = { member_id: string; status: string; proxy_member_id: string | null };
 type Member = { member_id: string; name: string };
 type Trend = { title: string; date: string; attendance_rate: number; answer_rate: number };
 
@@ -84,6 +90,9 @@ export default function Events() {
   }
 
   const attByMember = Object.fromEntries(att.map((a) => [a.member_id, a.status]));
+  const proxyByMember: Record<string, string | null> = Object.fromEntries(
+    att.map((a) => [a.member_id, a.proxy_member_id])
+  );
 
   return (
     <div>
@@ -141,11 +150,32 @@ export default function Events() {
               CSV出力
             </button>
           </div>
+
+          {summary.quorum !== null && (
+            <div className="text-sm mb-2 p-2 rounded bg-slate-50">
+              <span className="text-slate-500 text-xs mr-2">定足数 {summary.quorum}名</span>
+              <span className={summary.quorum_met ? "text-green-700" : "text-red-600"}>
+                委任含む {summary.present_with_proxies}名 →{" "}
+                {summary.quorum_met ? "充足" : "不足"}
+              </span>
+              <span className="mx-2 text-slate-300">/</span>
+              <span
+                className={summary.quorum_met_without_proxies ? "text-green-700" : "text-red-600"}
+              >
+                委任除く {summary.present}名 →{" "}
+                {summary.quorum_met_without_proxies ? "充足" : "不足"}
+              </span>
+              <p className="text-xs text-slate-400 mt-1">
+                ※ 委任を定足数に数えるかは規約に依ります。両方を表示しています（判定の補助）。
+              </p>
+            </div>
+          )}
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-slate-500">
                 <th className="py-1">会員</th>
                 <th>状態</th>
+                <th>委任先</th>
                 <th>手動修正</th>
               </tr>
             </thead>
@@ -154,6 +184,9 @@ export default function Events() {
                 <tr key={id} className="border-t">
                   <td className="py-1">{name}</td>
                   <td className="font-semibold">{attByMember[id] ?? "未回答"}</td>
+                  <td className="text-slate-500">
+                    {proxyByMember[id] ? names[proxyByMember[id]!] ?? proxyByMember[id] : "-"}
+                  </td>
                   <td>
                     <select
                       className="text-xs border rounded p-1"
