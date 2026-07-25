@@ -1,0 +1,15 @@
+# Cloud Build へアップロードするソースから除外するもの。
+# ※ .worktrees（ローカルの git worktree 置き場・数GB）を確実に除外する。
+.git/
+.gitignore
+.worktrees/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.env
+.env.*
+!.env.example
+web/node_modules/
+web/dist/
