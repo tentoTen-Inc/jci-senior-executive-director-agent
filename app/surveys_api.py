@@ -1,7 +1,7 @@
 """アンケートAPI（docs/survey-design.md §5, F7）。
 
 配信は現行の Google フォームを維持し、本APIは取込・集計・要約を担う。
-未提出者の催促（P4-2）とレポート通知（P4-3）は後続フェーズ。
+未提出者の催促（F7-3）とレポート通知・過去回比較（F7-4/F7-5）まで含む。
 """
 from __future__ import annotations
 
@@ -19,9 +19,11 @@ from .line_push import member_text_sender
 from .llm import digest_survey
 from .llm import model_name as llm_model_name
 from .models import DeliveryJob, InferenceUsage, Survey
+from .summary import officer_member_ids
 from .survey_agg import aggregate_survey, free_texts
 from .survey_import import build_survey
 from .survey_match import apply_matches, pending_members
+from .survey_report import build_notification_text, build_report, survey_trends
 
 router = APIRouter(tags=["surveys"])
 
@@ -99,6 +101,12 @@ def list_surveys(kind: str | None = None):
     return get_repo().list_surveys(kind=kind)
 
 
+@router.get("/surveys/trends")
+def surveys_trends(kind: str | None = None):
+    """過去回の総合平均の推移（F7-5）。※ `{survey_id}` より前に定義すること。"""
+    return survey_trends(get_repo(), kind=kind)
+
+
 @router.get("/surveys/{survey_id}")
 def get_survey(survey_id: str):
     """設問・回答と集計値を返す。"""
@@ -122,6 +130,72 @@ def sync_survey(
         SurveyImport(form_id=survey.form_id, kind=survey.kind, event_id=survey.event_id),
         x_goog_authenticated_user_email,
     )
+
+
+class SurveyReport(BaseModel):
+    notify: bool = True  # 五役へLINE通知するか
+
+
+@router.post("/surveys/{survey_id}/report")
+def report_survey(
+    survey_id: str,
+    payload: SurveyReport | None = None,
+    x_goog_authenticated_user_email: str | None = Header(default=None),
+):
+    """集計レポートを生成し、五役へ通知する（F7-4）。"""
+    repo = get_repo()
+    survey = repo.get_survey(survey_id)
+    if survey is None:
+        raise HTTPException(status_code=404, detail="survey not found")
+
+    actor = _actor(x_goog_authenticated_user_email)
+    now = datetime.now()
+    report = build_report(repo, survey, now=now)
+    notify = payload.notify if payload is not None else True
+    result: dict = {"survey_id": survey_id, "report": report, "notified": False}
+
+    if notify:
+        officers = officer_member_ids(repo)
+        if not officers:
+            raise HTTPException(
+                status_code=400,
+                detail="通知先の五役が見つかりません（役職の登録を確認してください）。",
+            )
+        text = build_notification_text(repo, survey)
+        job = DeliveryJob(
+            job_id=f"svyrep_{survey_id}_{now.strftime('%Y%m%d%H%M%S')}",
+            type="survey_report",
+            event_id=survey.event_id,
+            targets=officers,
+            idempotency_key=f"{survey_id}:report",
+        )
+        repo.save_delivery_job(job)
+        delivery = execute_delivery(
+            repo, job, text, now=now, sender=member_text_sender(repo, text)
+        )
+        if delivery.halted:
+            write_audit(
+                repo, actor=actor, action="survey.report.halted",
+                target=survey_id, detail=", ".join(delivery.problems),
+            )
+            raise HTTPException(
+                status_code=409,
+                detail=f"ガードレールにより通知を中止しました: {', '.join(delivery.problems)}",
+            )
+        result.update({
+            "notified": True,
+            "targets": len(officers),
+            "sent": delivery.sent,
+            "blocked": delivery.blocked,
+            "deferred": delivery.deferred,
+            "failed": delivery.failed,
+        })
+
+    write_audit(
+        repo, actor=actor, action="survey.report", target=survey_id,
+        detail=f"notify={notify}",
+    )
+    return result
 
 
 @router.get("/surveys/{survey_id}/pending")

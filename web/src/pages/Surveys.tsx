@@ -54,6 +54,14 @@ type Pending = {
   pending: { member_id: string; name: string }[];
 };
 
+type TrendPoint = {
+  survey_id: string;
+  title: string;
+  kind: string;
+  responses: number;
+  overall_average: number | null;
+};
+
 const KIND_LABEL: Record<string, string> = { internal: "対内", external: "対外" };
 
 /** 分布を簡易バーで表す（1..high の件数）。 */
@@ -86,12 +94,16 @@ export default function Surveys() {
   const [sel, setSel] = useState<Survey | null>(null);
   const [agg, setAgg] = useState<Aggregate | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
+  const [trends, setTrends] = useState<TrendPoint[]>([]);
+  const [report, setReport] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({ form_id: "", kind: "internal", event_id: "" });
 
-  const load = () =>
+  const load = () => {
     api<Survey[]>("/surveys").then(setItems).catch((e) => setMsg(e.message));
+    api<TrendPoint[]>("/surveys/trends").then(setTrends).catch(() => {});
+  };
   useEffect(() => {
     load();
   }, []);
@@ -102,6 +114,7 @@ export default function Surveys() {
       setSel(data.survey);
       setAgg(data.aggregate);
       setPending(null);
+      setReport(null);
       if (data.survey.kind === "internal") {
         api<Pending>(`/surveys/${id}/pending`).then(setPending).catch(() => setPending(null));
       }
@@ -154,6 +167,23 @@ export default function Surveys() {
         `催促しました: 未提出${r.pending}名 / 送信${r.sent} 保留${r.deferred} ブロック${r.blocked} 失敗${r.failed}`
       );
       await open(survey.survey_id);
+    } catch (e) {
+      setMsg((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function makeReport(survey: Survey, notify: boolean) {
+    if (notify && !confirm("集計レポートを五役へLINEで通知します。よろしいですか？")) return;
+    setBusy(true);
+    try {
+      const r = await api<{ report: string; notified: boolean; sent?: number }>(
+        `/surveys/${survey.survey_id}/report`,
+        { method: "POST", body: JSON.stringify({ notify }) }
+      );
+      setReport(r.report);
+      setMsg(r.notified ? `五役へ通知しました（送信${r.sent ?? 0}件）。` : "レポートを作成しました。");
     } catch (e) {
       setMsg((e as Error).message);
     } finally {
@@ -282,6 +312,20 @@ export default function Surveys() {
                 未提出 {pending.pending_member_ids.length}名に催促
               </button>
             )}
+            <button
+              className="bg-slate-200 text-navy rounded px-2 py-1 text-xs"
+              disabled={busy}
+              onClick={() => makeReport(sel, false)}
+            >
+              レポート作成
+            </button>
+            <button
+              className="bg-brand text-white rounded px-2 py-1 text-xs"
+              disabled={busy}
+              onClick={() => makeReport(sel, true)}
+            >
+              五役へ通知
+            </button>
             <button className="text-slate-500 underline text-xs" onClick={() => setSel(null)}>
               閉じる
             </button>
@@ -382,6 +426,45 @@ export default function Surveys() {
               ))}
             </div>
           </div>
+
+          {report && (
+            <div className="mt-3 pt-3 border-t">
+              <div className="font-semibold text-navy text-sm mb-1">レポート（Markdown）</div>
+              <pre className="bg-slate-50 rounded p-2 text-xs overflow-x-auto whitespace-pre-wrap">
+                {report}
+              </pre>
+            </div>
+          )}
+        </Card>
+      )}
+
+      {trends.length > 1 && (
+        <Card title="過去回の推移（総合平均）">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-slate-500">
+                <th className="py-1">アンケート</th>
+                <th>区分</th>
+                <th>回答</th>
+                <th>総合平均</th>
+              </tr>
+            </thead>
+            <tbody>
+              {trends.map((t) => (
+                <tr key={t.survey_id} className="border-t">
+                  <td className="py-1">{t.title}</td>
+                  <td className="text-slate-500">{KIND_LABEL[t.kind] ?? t.kind}</td>
+                  <td>{t.responses}</td>
+                  <td className="font-semibold">
+                    {t.overall_average === null ? "-" : t.overall_average.toFixed(1)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="text-xs text-slate-400 mt-1">
+            ※ 設問文は回ごとに変わるため、全スケール設問の総合平均で比較しています。
+          </p>
         </Card>
       )}
     </div>
