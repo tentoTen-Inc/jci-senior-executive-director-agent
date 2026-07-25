@@ -104,7 +104,7 @@ Gemini 呼び出しは既存 `InferenceLog`（`docs/dashboard-design.md` §4.3�
 | POST `/api/notices/{id}/digest` | Gemini要約・告知文生成（再実行可） | P3-1 |
 | POST `/api/notices/{id}/archive` | 対応不要としてアーカイブ | P3-1 |
 | POST `/api/notices/import-gmail` | Gmail からの取込（dry-run 可） | P3-2 |
-| POST `/api/notices/{id}/deliver` | 対象を指定して配信（ガードレール適用） | P3-3 |
+| POST `/api/notices/{id}/deliver` | 対象を指定して配信（ガードレール適用・`force`で再配信） | P3-3 |
 | GET `/api/notices/{id}/actions` / POST …/{action_id}/done | 対応状況の追跡 | P3-4 |
 
 作成・生成・配信・アーカイブは監査ログ（`notice.create` / `notice.digest` / `notice.deliver` / `notice.archive`）に記録する。
@@ -138,7 +138,7 @@ Gemini 呼び出しは既存 `InferenceLog`（`docs/dashboard-design.md` §4.3�
 |---|---|---|
 | **P3-1**（実装済み） | `ExternalNotice` モデル＋手動投入/一覧/詳細API＋Gemini要約・告知文生成（コスト記録込み）＋SPA「対外連絡」画面 | なし（Gmail設定不要で運用開始できる） |
 | **P3-2** | Gmail取込（認証・ラベル差分ポーリング・添付PDFのテキスト抽出・冪等）＋tick結線 | 専用アドレスと認証方式の確定（§7） |
-| **P3-3** | 対象解決（全員/委員会/役職/任意）＋配信実行（既存ガードレール流用）＋配信履歴 | P3-1 |
+| **P3-3**（実装済み） | 対象解決（全員/委員会/役職/任意）＋配信実行（既存ガードレール流用）＋配信履歴 | P3-1 |
 | **P3-4** | アクションのタスク化・対応状況追跡・未対応者への段階催促 | P3-3 |
 
 ---
