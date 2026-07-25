@@ -11,12 +11,23 @@ import {
 import { api } from "../api/client";
 import { Card } from "../components/Card";
 
+type Cost = {
+  month_start: string;
+  calls: number;
+  failed_calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  llm_cost_usd: number;
+  infra_cost_usd: number;
+  monthly_cost_usd: number;
+};
 type Overview = {
   delivery_success_rate: number;
   delivery_total: number;
   avg_attendance_rate: number;
   avg_answer_rate: number;
   reminder_count: number;
+  cost: Cost;
 };
 type Trend = { title: string; answer_rate: number; attendance_rate: number };
 type DeliveryLog = {
@@ -66,7 +77,47 @@ export default function Agent() {
           <Stat label="平均出席率" value={`${Math.round(ov.avg_attendance_rate * 100)}%`} />
           <Stat label="平均回答率" value={`${Math.round(ov.avg_answer_rate * 100)}%`} />
           <Stat label="配信総数" value={`${ov.delivery_total}`} />
+          <Stat label="当月コスト" value={`$${ov.cost.monthly_cost_usd.toFixed(2)}`} />
         </div>
+      )}
+
+      {ov && (
+        <Card title="当月のAIコスト（概算）">
+          <table className="text-sm">
+            <tbody>
+              <tr className="border-t">
+                <td className="py-1 pr-4 text-slate-500">集計期間</td>
+                <td>{ov.cost.month_start.slice(0, 7)} 〜 現在</td>
+              </tr>
+              <tr className="border-t">
+                <td className="py-1 pr-4 text-slate-500">Gemini呼び出し</td>
+                <td>
+                  {ov.cost.calls} 回
+                  {ov.cost.failed_calls > 0 && (
+                    <span className="text-red-600">（失敗 {ov.cost.failed_calls}）</span>
+                  )}
+                </td>
+              </tr>
+              <tr className="border-t">
+                <td className="py-1 pr-4 text-slate-500">トークン</td>
+                <td>
+                  入力 {ov.cost.input_tokens.toLocaleString()} / 出力{" "}
+                  {ov.cost.output_tokens.toLocaleString()}
+                </td>
+              </tr>
+              <tr className="border-t">
+                <td className="py-1 pr-4 text-slate-500">内訳</td>
+                <td>
+                  Gemini ${ov.cost.llm_cost_usd.toFixed(2)} ＋ インフラ概算 $
+                  {ov.cost.infra_cost_usd.toFixed(2)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <p className="text-xs text-slate-400 mt-2">
+            ※ 記録したトークン数×単価による概算です。実請求額は Cloud Billing を参照してください。
+          </p>
+        </Card>
       )}
 
       {trends.length > 0 && (

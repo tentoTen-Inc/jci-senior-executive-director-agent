@@ -16,6 +16,7 @@ from .models import (
     Escalation,
     Event,
     EventStatus,
+    InferenceLog,
     InviteCode,
     LinkState,
     Member,
@@ -77,6 +78,10 @@ class Repository(Protocol):
     def get_proposal(self, proposal_id: str) -> Proposal | None: ...
     def list_proposals(self, *, status: str | None = None) -> list[Proposal]: ...
 
+    # --- inference (LLMコスト) ---
+    def save_inference_log(self, log: InferenceLog) -> None: ...
+    def list_inference_logs(self, *, since: datetime | None = None) -> list[InferenceLog]: ...
+
 
 class InMemoryRepository:
     """テスト・ローカル用のインメモリ実装。"""
@@ -94,6 +99,7 @@ class InMemoryRepository:
         self._escalations: dict[str, Escalation] = {}
         self._audit: list[AuditLog] = []
         self._proposals: dict[str, Proposal] = {}
+        self._inference_logs: list[InferenceLog] = []
 
     # --- members ---
     def upsert_member(self, member: Member) -> None:
@@ -225,6 +231,16 @@ class InMemoryRepository:
         if status is not None:
             items = [p for p in items if p.status == status]
         return [p.model_copy(deep=True) for p in items]
+
+    # --- inference (LLMコスト) ---
+    def save_inference_log(self, log: InferenceLog) -> None:
+        self._inference_logs.append(log.model_copy(deep=True))
+
+    def list_inference_logs(self, *, since: datetime | None = None) -> list[InferenceLog]:
+        items = self._inference_logs
+        if since is not None:
+            items = [x for x in items if x.at >= since]
+        return [x.model_copy(deep=True) for x in items]
 
 
 def utcnow() -> datetime:

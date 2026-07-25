@@ -126,7 +126,16 @@ auditLogs/{id}
 ```
 ※ 現状 Cloud Logging には出しているが、UI表示用にFirestoreへも記録。
 
-### 4.3 拡張
+### 4.3 新規: `InferenceLog`（LLM推論ログ）
+```
+inferenceLogs/{id}
+  log_id, at, kind("proposal_review"|...), model, target(proposal_id 等)
+  input_tokens, output_tokens, cost_usd, ok, error
+```
+※ Gemini 呼び出しごとに1件記録し、月間コストKPI（§6）の元データにする。単価は
+`app/inference.py` の `MODEL_PRICES`（環境変数 `LLM_PRICE_*_USD_PER_1M` で上書き可）。
+
+### 4.4 拡張
 - `Member`: 既存で概ね充足。UI表示用に派生指標（出欠率）はAPI集計で算出（モデルには持たせない）。
 - `Settings`: 既存（kill_switch / quiet_hours / rate_limit）流用。催促ポリシー編集は `ReminderPolicy` のCRUDを追加。
 
@@ -179,7 +188,9 @@ auditLogs/{id}
 | 月間コスト | Geminiトークン×単価＋Cloud Run（概算） | 集計（トークンは推論時に記録） |
 | エスカレーション数 | open件数 | escalations |
 
-> コスト精緻化のため、Gemini呼び出し時に入出力トークンを記録するフィールドを推論ログに追加（Phase2）。
+> コスト精緻化のため、Gemini呼び出し時に入出力トークンを推論ログ（§4.3 `InferenceLog`）へ記録する。
+> 月間コストは当月1日以降のログを集計し、`GET /api/kpi/overview` の `cost` で返す（実装済み）。
+> インフラ費は環境変数 `INFRA_MONTHLY_USD` の固定概算を加算する。
 
 ---
 
@@ -237,7 +248,7 @@ web/
 1. **サービス分離**: 管理用を別 Cloud Run（`jci-sed-admin`）に分離し IAP 適用。公開部（webhook/tick）は既存 `jci-sed-agent` に残す。同一コードを `ROLE=admin|public` で出し分け。
 2. **議案データ入力**: **Drive 取込中心**。委員会が Drive に上げた資料をエージェントが取り込み議案カード化（手入力は補助）。
 3. **UIライブラリ**: Vite + React + TypeScript + Tailwind + Recharts、すべてバンドル同梱（外部CDN不使用）。
-4. **コスト記録**: Gemini 呼び出しのトークン記録は Phase2 で追加。
+4. **コスト記録**: Gemini 呼び出しのトークン記録は Phase2 で追加（`InferenceLog`＝§4.3 として実装済み）。
 5. **既存 `/dashboard`（最小HTML）**: 新SPA移行後に廃止。
 6. **進め方**: Phase1 から issue 化して自律実装。
 

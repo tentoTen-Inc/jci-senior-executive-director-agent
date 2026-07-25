@@ -268,6 +268,29 @@ class AuditLog(BaseModel):
     detail: str | None = None
 
 
+class InferenceUsage(BaseModel):
+    """LLM 1回の呼び出しで消費したトークン（プロバイダ応答から取得）。"""
+
+    model: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+
+class InferenceLog(BaseModel):
+    """LLM推論ログ。月間コストKPIの元データ（docs/dashboard-design.md §6）。"""
+
+    log_id: str
+    at: datetime
+    kind: str  # proposal_review | ...（用途）
+    model: str
+    target: str | None = None  # proposal_id 等
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost_usd: float = 0.0
+    ok: bool = True
+    error: str | None = None
+
+
 # --------------------------------------------------------------------------- #
 # 議案ライフサイクル（docs/dashboard-design.md §4.1, F6）
 # --------------------------------------------------------------------------- #
