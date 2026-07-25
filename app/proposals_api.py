@@ -138,7 +138,8 @@ def update_proposal(proposal_id: str, payload: ProposalUpdate):
     p = repo.get_proposal(proposal_id)
     if p is None:
         raise HTTPException(status_code=404, detail="proposal not found")
-    data = payload.model_dump(exclude_unset=True)
+    # model_dump はネストしたモデル(deadlines)を dict に落としてしまうため属性から取る
+    data = {name: getattr(payload, name) for name in payload.model_fields_set}
     updated = p.model_copy(update=data)
     repo.upsert_proposal(updated)
     return updated

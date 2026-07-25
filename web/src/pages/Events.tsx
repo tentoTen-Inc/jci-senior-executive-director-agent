@@ -13,10 +13,28 @@ import { Card } from "../components/Card";
 
 type EventRow = {
   event_id: string;
+  type: string;
   title: string;
   datetime_start: string;
+  location: string | null;
+  attendance_deadline: string | null;
+  target_scope: { kind: string; value: string[] };
+  quorum: number | null;
   status: string;
 };
+
+const EVENT_TYPES = ["例会", "理事会", "五役会", "委員会", "総会", "イベント"];
+const SCOPE_KINDS = [
+  { key: "all", label: "全員" },
+  { key: "committee", label: "委員会" },
+  { key: "officer", label: "役職" },
+  { key: "custom", label: "会員ID指定" },
+];
+
+/** datetime-local 用（"YYYY-MM-DDTHH:MM"）に整える。 */
+function dtLocal(iso: string | null): string {
+  return iso ? iso.slice(0, 16) : "";
+}
 type Summary = {
   total_targets: number;
   answered: number;
@@ -44,6 +62,15 @@ export default function Events() {
   const [names, setNames] = useState<Record<string, string>>({});
   const [trends, setTrends] = useState<Trend[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
+  const [edit, setEdit] = useState<EventRow | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [draft, setDraft] = useState({
+    type: "例会",
+    title: "",
+    datetime_start: "",
+    location: "",
+    quorum: "",
+  });
 
   useEffect(() => {
     api<EventRow[]>("/events").then(setEvents).catch((e) => setMsg(e.message));
@@ -87,6 +114,58 @@ export default function Events() {
     a.download = `attendances_${sel}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function createEvent() {
+    if (!draft.title.trim() || !draft.datetime_start) {
+      setMsg("イベント名と開催日時は必須です。");
+      return;
+    }
+    try {
+      await api("/events", {
+        method: "POST",
+        body: JSON.stringify({
+          type: draft.type,
+          title: draft.title.trim(),
+          datetime_start: draft.datetime_start,
+          location: draft.location.trim() || null,
+          quorum: draft.quorum ? Number(draft.quorum) : null,
+          target_scope: { kind: "all", value: [] },
+          status: "open",
+        }),
+      });
+      setMsg(`${draft.title} を登録しました。`);
+      setDraft({ type: "例会", title: "", datetime_start: "", location: "", quorum: "" });
+      setCreating(false);
+      api<EventRow[]>("/events").then(setEvents);
+    } catch (e) {
+      setMsg((e as Error).message);
+    }
+  }
+
+  async function saveEvent() {
+    if (!edit) return;
+    try {
+      await api(`/events/${edit.event_id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          type: edit.type,
+          title: edit.title,
+          datetime_start: edit.datetime_start,
+          location: edit.location,
+          attendance_deadline: edit.attendance_deadline,
+          target_scope: edit.target_scope,
+          quorum: edit.quorum,
+          status: edit.status,
+        }),
+      });
+      setMsg(`${edit.title} を更新しました。`);
+      setEdit(null);
+      api<EventRow[]>("/events").then(setEvents);
+      if (sel === edit.event_id) open(edit.event_id);
+    } catch (e) {
+      setMsg((e as Error).message);
+    }
   }
 
   async function downloadPackage() {
@@ -134,6 +213,57 @@ export default function Events() {
       )}
 
       <Card title="イベント一覧">
+        {creating ? (
+          <div className="flex flex-wrap gap-2 items-center text-sm mb-3 pb-3 border-b">
+            <select
+              className="border rounded p-1"
+              value={draft.type}
+              onChange={(e) => setDraft({ ...draft, type: e.target.value })}
+            >
+              {EVENT_TYPES.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+            <input
+              className="border rounded p-1 w-48"
+              placeholder="イベント名"
+              value={draft.title}
+              onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+            />
+            <input
+              type="datetime-local"
+              className="border rounded p-1"
+              value={draft.datetime_start}
+              onChange={(e) => setDraft({ ...draft, datetime_start: e.target.value })}
+            />
+            <input
+              className="border rounded p-1 w-36"
+              placeholder="場所"
+              value={draft.location}
+              onChange={(e) => setDraft({ ...draft, location: e.target.value })}
+            />
+            <input
+              type="number"
+              className="border rounded p-1 w-24"
+              placeholder="定足数"
+              value={draft.quorum}
+              onChange={(e) => setDraft({ ...draft, quorum: e.target.value })}
+            />
+            <button className="bg-brand text-white rounded px-3 py-1" onClick={createEvent}>
+              登録
+            </button>
+            <button className="text-slate-500 underline text-xs" onClick={() => setCreating(false)}>
+              やめる
+            </button>
+          </div>
+        ) : (
+          <button
+            className="bg-slate-200 text-navy rounded px-3 py-1 text-sm mb-3"
+            onClick={() => setCreating(true)}
+          >
+            イベントを登録
+          </button>
+        )}
         <table className="w-full text-sm">
           <tbody>
             {events.map((e) => (
@@ -141,12 +271,18 @@ export default function Events() {
                 <td className="py-1">{e.title}</td>
                 <td className="text-slate-500">{e.datetime_start.replace("T", " ").slice(0, 16)}</td>
                 <td>{e.status}</td>
-                <td>
+                <td className="space-x-2 whitespace-nowrap">
                   <button
                     className="text-xs bg-slate-200 text-navy rounded px-2 py-1"
                     onClick={() => open(e.event_id)}
                   >
                     詳細
+                  </button>
+                  <button
+                    className="text-xs bg-slate-200 text-navy rounded px-2 py-1"
+                    onClick={() => setEdit({ ...e, datetime_start: dtLocal(e.datetime_start) })}
+                  >
+                    編集
                   </button>
                 </td>
               </tr>
@@ -155,6 +291,128 @@ export default function Events() {
         </table>
         {events.length === 0 && <p className="text-slate-500 text-sm">イベントがありません。</p>}
       </Card>
+
+      {edit && (
+        <Card title={`イベントを編集: ${edit.title}`}>
+          <div className="grid gap-2 md:grid-cols-2 text-sm">
+            <label className="block">
+              <span className="text-xs text-slate-500">種別</span>
+              <select
+                className="border rounded p-1 w-full"
+                value={edit.type}
+                onChange={(ev) => setEdit({ ...edit, type: ev.target.value })}
+              >
+                {EVENT_TYPES.map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-xs text-slate-500">イベント名</span>
+              <input
+                className="border rounded p-1 w-full"
+                value={edit.title}
+                onChange={(ev) => setEdit({ ...edit, title: ev.target.value })}
+              />
+            </label>
+            <label className="block">
+              <span className="text-xs text-slate-500">開催日時</span>
+              <input
+                type="datetime-local"
+                className="border rounded p-1 w-full"
+                value={dtLocal(edit.datetime_start)}
+                onChange={(ev) => setEdit({ ...edit, datetime_start: ev.target.value })}
+              />
+            </label>
+            <label className="block">
+              <span className="text-xs text-slate-500">出欠締切</span>
+              <input
+                type="datetime-local"
+                className="border rounded p-1 w-full"
+                value={dtLocal(edit.attendance_deadline)}
+                onChange={(ev) =>
+                  setEdit({ ...edit, attendance_deadline: ev.target.value || null })
+                }
+              />
+            </label>
+            <label className="block">
+              <span className="text-xs text-slate-500">場所</span>
+              <input
+                className="border rounded p-1 w-full"
+                value={edit.location ?? ""}
+                onChange={(ev) => setEdit({ ...edit, location: ev.target.value || null })}
+              />
+            </label>
+            <label className="block">
+              <span className="text-xs text-slate-500">定足数（人数）</span>
+              <input
+                type="number"
+                className="border rounded p-1 w-full"
+                value={edit.quorum ?? ""}
+                onChange={(ev) =>
+                  setEdit({ ...edit, quorum: ev.target.value ? Number(ev.target.value) : null })
+                }
+              />
+            </label>
+            <label className="block">
+              <span className="text-xs text-slate-500">対象範囲</span>
+              <select
+                className="border rounded p-1 w-full"
+                value={edit.target_scope.kind}
+                onChange={(ev) =>
+                  setEdit({ ...edit, target_scope: { kind: ev.target.value, value: [] } })
+                }
+              >
+                {SCOPE_KINDS.map((k) => (
+                  <option key={k.key} value={k.key}>{k.label}</option>
+                ))}
+              </select>
+            </label>
+            {edit.target_scope.kind !== "all" && (
+              <label className="block">
+                <span className="text-xs text-slate-500">対象（カンマ区切り）</span>
+                <input
+                  className="border rounded p-1 w-full"
+                  placeholder="例: 総務委員会, コト創り委員会"
+                  value={edit.target_scope.value.join(", ")}
+                  onChange={(ev) =>
+                    setEdit({
+                      ...edit,
+                      target_scope: {
+                        kind: edit.target_scope.kind,
+                        value: ev.target.value
+                          .split(",")
+                          .map((x) => x.trim())
+                          .filter(Boolean),
+                      },
+                    })
+                  }
+                />
+              </label>
+            )}
+            <label className="block">
+              <span className="text-xs text-slate-500">状態</span>
+              <select
+                className="border rounded p-1 w-full"
+                value={edit.status}
+                onChange={(ev) => setEdit({ ...edit, status: ev.target.value })}
+              >
+                <option value="draft">下書き</option>
+                <option value="open">受付中</option>
+                <option value="closed">終了</option>
+              </select>
+            </label>
+          </div>
+          <div className="mt-3 flex gap-2 items-center">
+            <button className="bg-brand text-white rounded px-3 py-1 text-sm" onClick={saveEvent}>
+              保存
+            </button>
+            <button className="text-slate-500 underline text-xs" onClick={() => setEdit(null)}>
+              閉じる
+            </button>
+          </div>
+        </Card>
+      )}
 
       {sel && summary && (
         <Card title="出欠詳細">

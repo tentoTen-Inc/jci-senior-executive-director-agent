@@ -76,3 +76,19 @@ def test_stage_transition(repo):
 def test_not_found():
     assert client.get("/api/proposals/nope").status_code == 404
     assert client.post("/api/proposals/nope/stage", json={"stage": "board"}).status_code == 404
+
+
+def test_update_proposal_keeps_nested_model_typed(repo):
+    """部分更新でネストしたモデル(deadlines)が dict に落ちないこと。"""
+    pid = client.post("/api/proposals", json={"title": "A"}, headers=IAP).json()["proposal_id"]
+    res = client.put(
+        f"/api/proposals/{pid}",
+        json={"deadlines": {"submit": "2026-08-05T23:59:00"}, "committee": "総務委員会"},
+    )
+    assert res.status_code == 200
+    saved = repo.get_proposal(pid)
+    from datetime import datetime
+
+    assert saved.deadlines.submit == datetime(2026, 8, 5, 23, 59)  # モデルとして保持
+    assert saved.committee == "総務委員会"
+    assert saved.title == "A"  # 未指定は保持
