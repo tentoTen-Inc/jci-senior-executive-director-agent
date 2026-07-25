@@ -16,7 +16,7 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from . import config
-from .models import InferenceUsage, LlmReview, NoticeDigest
+from .models import InferenceUsage, LlmReview, NoticeDigest, SurveyDigest, SurveyTheme
 
 logger = logging.getLogger("jci-agent.llm")
 
@@ -74,6 +74,24 @@ _INTENT_PROMPT = """会員のメッセージから、どのイベントの出欠
 
 # 会員のメッセージ
 {text}
+
+# 出力(JSONのみ)
+"""
+
+_SURVEY_PROMPT = """あなたは青年会議所(JC)の専務理事を補佐するアシスタントです。
+例会アンケートの自由記述を分析し、JSONで出力してください。
+
+出力フィールド:
+- summary: 全体傾向の要約(3行以内)
+- themes: 論点のまとまり(最大5件)。各要素は
+  {{label: 分類名, count: 該当件数, examples: 代表的な記述(最大2件・原文のまま)}}
+- sentiment: {{positive: 件数, neutral: 件数, negative: 件数}}(合計は記述件数に一致させる)
+- improvements: 次回に向けた改善提案(最大5件・記述に根拠があるものだけ)
+
+記述に無い事実を作らないでください。件数は必ず実際の記述数の範囲に収めてください。
+
+# 自由記述（{count}件）
+{texts}
 
 # 出力(JSONのみ)
 """
@@ -182,6 +200,64 @@ def review_proposal(content: str) -> ReviewOutcome | None:
         return None
     return ReviewOutcome(
         review=review,
+        usage=InferenceUsage(
+            model=model,
+            input_tokens=gen.input_tokens,
+            output_tokens=gen.output_tokens,
+        ),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# アンケート自由記述の要約・分類（F7-2, docs/survey-design.md §5）
+# --------------------------------------------------------------------------- #
+class SurveyDigestOutcome(BaseModel):
+    digest: SurveyDigest
+    usage: InferenceUsage
+
+
+def generate_survey_digest(
+    texts: list[str], *, model: str, project: str, location: str
+) -> Generation:
+    """自由記述の要約生成（テストでモックする境界）。"""
+    joined = "\n".join(f"- {t}" for t in texts)
+    prompt = _SURVEY_PROMPT.format(count=len(texts), texts=joined)
+    return _call_gemini(prompt, model=model, project=project, location=location)
+
+
+def digest_survey(texts: list[str]) -> SurveyDigestOutcome | None:
+    """自由記述を要約・分類・感情傾向にまとめる。失敗時・記述0件は None。"""
+    if not texts:
+        return None
+    model, project, location = _target()
+    try:
+        gen = generate_survey_digest(texts, model=model, project=project, location=location)
+        data = json.loads(gen.text)
+        themes = [
+            SurveyTheme(
+                label=str(t.get("label", "")).strip(),
+                count=int(t.get("count", 0) or 0),
+                examples=[str(x) for x in (t.get("examples") or [])][:2],
+            )
+            for t in (data.get("themes") or [])[:5]
+            if str(t.get("label", "")).strip()
+        ]
+        sentiment = {
+            key: int((data.get("sentiment") or {}).get(key, 0) or 0)
+            for key in ("positive", "neutral", "negative")
+        }
+        digest = SurveyDigest(
+            summary=str(data.get("summary", "")).strip(),
+            themes=themes,
+            sentiment=sentiment,
+            improvements=[str(x) for x in (data.get("improvements") or [])][:5],
+            model=model,
+        )
+    except Exception:  # noqa: BLE001 - LLM未設定/失敗でも本処理は止めない
+        logger.exception("アンケート要約の生成に失敗しました")
+        return None
+    return SurveyDigestOutcome(
+        digest=digest,
         usage=InferenceUsage(
             model=model,
             input_tokens=gen.input_tokens,

@@ -45,6 +45,7 @@ from .notice_actions import ACTION_NOTICE_DONE, handle_done_postback
 from .notices_api import router as notices_router
 from .proposals_api import router as proposals_router
 from .reminders import plan_reminders
+from .surveys_api import router as surveys_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("jci-agent")
@@ -81,6 +82,8 @@ app.include_router(proposals_router, prefix="/admin")
 app.include_router(proposals_router, prefix="/api")
 app.include_router(notices_router, prefix="/admin")
 app.include_router(notices_router, prefix="/api")
+app.include_router(surveys_router, prefix="/admin")
+app.include_router(surveys_router, prefix="/api")
 
 
 @app.get("/dashboard", include_in_schema=False)

@@ -27,6 +27,7 @@ from .models import (
     Proposal,
     ReminderPolicy,
     Settings,
+    Survey,
 )
 
 
@@ -101,6 +102,12 @@ class Repository(Protocol):
     def get_conversation(self, member_id: str) -> Conversation | None: ...
     def save_conversation(self, conversation: Conversation) -> None: ...
 
+    # --- アンケート ---
+    def upsert_survey(self, survey: Survey) -> None: ...
+    def get_survey(self, survey_id: str) -> Survey | None: ...
+    def get_survey_by_form_id(self, form_id: str) -> Survey | None: ...
+    def list_surveys(self, *, kind: str | None = None) -> list[Survey]: ...
+
 
 class InMemoryRepository:
     """テスト・ローカル用のインメモリ実装。"""
@@ -122,6 +129,7 @@ class InMemoryRepository:
         self._notices: dict[str, ExternalNotice] = {}
         self._notice_actions: dict[str, NoticeAction] = {}
         self._conversations: dict[str, Conversation] = {}
+        self._surveys: dict[str, Survey] = {}
 
     # --- members ---
     def upsert_member(self, member: Member) -> None:
@@ -315,6 +323,27 @@ class InMemoryRepository:
 
     def save_conversation(self, conversation: Conversation) -> None:
         self._conversations[conversation.member_id] = conversation.model_copy(deep=True)
+
+    # --- アンケート ---
+    def upsert_survey(self, survey: Survey) -> None:
+        self._surveys[survey.survey_id] = survey.model_copy(deep=True)
+
+    def get_survey(self, survey_id: str) -> Survey | None:
+        s = self._surveys.get(survey_id)
+        return s.model_copy(deep=True) if s else None
+
+    def get_survey_by_form_id(self, form_id: str) -> Survey | None:
+        for s in self._surveys.values():
+            if s.form_id == form_id:
+                return s.model_copy(deep=True)
+        return None
+
+    def list_surveys(self, *, kind: str | None = None) -> list[Survey]:
+        items = list(self._surveys.values())
+        if kind is not None:
+            items = [s for s in items if s.kind == kind]
+        items.sort(key=lambda s: (s.synced_at or datetime.min), reverse=True)
+        return [s.model_copy(deep=True) for s in items]
 
 
 def utcnow() -> datetime:
