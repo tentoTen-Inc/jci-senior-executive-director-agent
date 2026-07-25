@@ -19,6 +19,7 @@ from .models import (
     ProposalStage,
     SedApproval,
 )
+from .proposal_matrix import build_proposal_matrix
 
 router = APIRouter(tags=["proposals"])
 
@@ -84,6 +85,16 @@ def import_drive(
             detail=f"created={summary.created} updated={summary.updated}",
         )
     return summary
+
+
+@router.get("/proposals/matrix")
+def proposal_matrix(status: str | None = "open"):
+    """委員会別提出マトリクス。既定では進行中（open）の議案のみ集計する。
+
+    ※ `/proposals/{proposal_id}` より前に定義すること（先着ルーティング）。
+    """
+    proposals = get_repo().list_proposals(status=status)
+    return build_proposal_matrix(proposals, now=datetime.now())
 
 
 @router.get("/proposals/{proposal_id}")
