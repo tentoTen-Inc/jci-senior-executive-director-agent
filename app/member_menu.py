@@ -16,6 +16,7 @@ from linebot.v3.messaging import (
     TextMessage,
 )
 
+from .assistant import answer_member_question
 from .events import resolve_targets
 from .line_messages import build_attendance_request
 from .models import (
@@ -133,5 +134,10 @@ def handle_member_text(
         return [record_contact(repo, member, now)]
     if any(k in t for k in ("メニュー", "menu", "ヘルプ", "help")):
         return [build_menu()]
-    # 未知の入力はメニューへ誘導（エコーは廃止）
+
+    # 定型に当たらない自由文は自LOM情報を根拠にした応答を試す（F8, assistant）。
+    # LLM未設定/失敗時は従来どおりメニューへ誘導する。
+    messages = answer_member_question(repo, member, t, now=now)
+    if messages is not None:
+        return messages
     return [build_menu(f"「{text}」について、以下からお選びください。")]

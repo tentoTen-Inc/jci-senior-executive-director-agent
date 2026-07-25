@@ -323,6 +323,23 @@ class ExternalNotice(BaseModel):
     history: list[NoticeHistory] = Field(default_factory=list)
 
 
+class ConversationTurn(BaseModel):
+    at: datetime
+    role: str  # user | assistant
+    text: str
+
+
+class Conversation(BaseModel):
+    """会員との直近のやり取り（docs/nl-assistant-design.md §4, F8-5）。
+
+    直近数往復のみ保持する（長期記憶は持たない）。
+    """
+
+    member_id: str
+    turns: list[ConversationTurn] = Field(default_factory=list)
+    updated_at: datetime | None = None
+
+
 class NoticeAction(BaseModel):
     """対外連絡から起票した「対象者がやること」（F5-3/F5-5）。
 

@@ -27,6 +27,16 @@ type HomeData = {
   this_week: EventBrief[];
 };
 
+type Escalation = {
+  escalation_id: string;
+  member_id: string;
+  member_name: string | null;
+  kind: string;
+  text: string | null;
+  created_at: string;
+  status: string;
+};
+
 function Stat({ label, value, warn }: { label: string; value: string; warn?: boolean }) {
   return (
     <div className="bg-white rounded-lg shadow-sm p-4 flex-1 min-w-[140px]">
@@ -43,10 +53,22 @@ function fmt(dt: string) {
 export default function Home() {
   const [data, setData] = useState<HomeData | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [escalations, setEscalations] = useState<Escalation[]>([]);
 
-  useEffect(() => {
+  const loadAll = () => {
     api<HomeData>("/home").then(setData).catch((e) => setErr(e.message));
-  }, []);
+    api<Escalation[]>("/escalations?status=open").then(setEscalations).catch(() => {});
+  };
+  useEffect(loadAll, []);
+
+  async function markHandled(id: string) {
+    try {
+      await api(`/escalations/${id}/handled`, { method: "POST" });
+      loadAll();
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
 
   if (err) return <Card title="ホーム"><p className="text-red-600 text-sm">{err}</p></Card>;
   if (!data) return <Card title="ホーム"><p className="text-slate-500 text-sm">読み込み中…</p></Card>;
@@ -75,6 +97,36 @@ export default function Home() {
           <li>対外連絡の未完了タスク: <b>{a.open_notice_actions}</b> 件</li>
         </ul>
       </Card>
+
+      {escalations.length > 0 && (
+        <Card title="取次・問い合わせ（会員から）">
+          <table className="w-full text-sm">
+            <tbody>
+              {escalations.map((e) => (
+                <tr key={e.escalation_id} className="border-t align-top">
+                  <td className="py-1 text-slate-500 whitespace-nowrap">{fmt(e.created_at)}</td>
+                  <td className="py-1 whitespace-nowrap">{e.member_name || e.member_id}</td>
+                  <td className="py-1 text-slate-500 whitespace-nowrap">
+                    {e.kind === "question" ? "質問" : "連絡希望"}
+                  </td>
+                  <td className="py-1">{e.text || "（内容なし）"}</td>
+                  <td className="py-1">
+                    <button
+                      className="bg-slate-200 text-navy rounded px-2 py-0.5 text-xs"
+                      onClick={() => markHandled(e.escalation_id)}
+                    >
+                      対応済み
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="text-xs text-slate-400 mt-2">
+            エージェントが答えられなかった質問と、会員からの連絡希望です。
+          </p>
+        </Card>
+      )}
 
       <Card title="直近の予定">
         {data.upcoming_events.length === 0 ? (

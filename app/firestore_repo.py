@@ -10,6 +10,7 @@ from datetime import datetime
 from .models import (
     Attendance,
     AuditLog,
+    Conversation,
     DeliveryJob,
     DeliveryLog,
     Escalation,
@@ -43,6 +44,7 @@ COL_PROPOSALS = "proposals"
 COL_INFERENCE_LOGS = "inferenceLogs"
 COL_NOTICES = "externalNotices"
 COL_NOTICE_ACTIONS = "noticeActions"
+COL_CONVERSATIONS = "conversations"
 SETTINGS_DOC = "global"
 
 
@@ -168,11 +170,19 @@ class FirestoreRepository:
             escalation.model_dump(mode="json")
         )
 
+    def get_escalation(self, escalation_id: str) -> Escalation | None:
+        snap = self._db.collection(COL_ESCALATIONS).document(escalation_id).get()
+        return Escalation.model_validate(snap.to_dict()) if snap.exists else None
+
     def list_escalations(self, *, status: str | None = None) -> list[Escalation]:
         col = self._db.collection(COL_ESCALATIONS)
         if status is not None:
             col = col.where("status", "==", status)
-        return [Escalation.model_validate(s.to_dict()) for s in col.stream()]
+        return sorted(
+            (Escalation.model_validate(s.to_dict()) for s in col.stream()),
+            key=lambda e: e.created_at,
+            reverse=True,
+        )
 
     # --- audit ---
     def save_audit(self, entry: AuditLog) -> None:
@@ -261,4 +271,14 @@ class FirestoreRepository:
         return sorted(
             (NoticeAction.model_validate(s.to_dict()) for s in col.stream()),
             key=lambda a: a.created_at,
+        )
+
+    # --- 会話履歴 ---
+    def get_conversation(self, member_id: str) -> Conversation | None:
+        snap = self._db.collection(COL_CONVERSATIONS).document(member_id).get()
+        return Conversation.model_validate(snap.to_dict()) if snap.exists else None
+
+    def save_conversation(self, conversation: Conversation) -> None:
+        self._db.collection(COL_CONVERSATIONS).document(conversation.member_id).set(
+            conversation.model_dump(mode="json")
         )

@@ -170,3 +170,39 @@ def test_admin_requires_auth():
     # 不正なシークレット
     bad = TestClient(main.app, headers={"X-Admin-Token": "wrong"})
     assert bad.get("/admin/members").status_code == 401
+
+
+def test_escalations_list_and_handled(repo):
+    """会員からの取次依頼を一覧し、対応済みにできる（F8-3）。"""
+    from datetime import datetime
+
+    from app.models import Escalation
+
+    repo.save_escalation(Escalation(
+        escalation_id="esc1", member_id="m1", kind="question",
+        text="会費を分割で払えますか", created_at=datetime(2026, 7, 25, 9, 0),
+    ))
+    repo.save_escalation(Escalation(
+        escalation_id="esc2", member_id="m2", kind="contact",
+        created_at=datetime(2026, 7, 25, 10, 0), status="handled",
+    ))
+
+    open_items = client.get("/admin/escalations?status=open").json()
+    assert [e["escalation_id"] for e in open_items] == ["esc1"]
+    assert open_items[0]["member_name"] == "太郎"  # 会員名を補完して返す
+
+    # 新しい順
+    assert [e["escalation_id"] for e in client.get("/admin/escalations").json()] == ["esc2", "esc1"]
+
+    res = client.post(
+        "/admin/escalations/esc1/handled",
+        headers={"X-Goog-Authenticated-User-Email": "sed@10to10.co.jp"},
+    )
+    assert res.status_code == 200
+    assert repo.get_escalation("esc1").status == "handled"
+    assert any(a.action == "escalation.handled" for a in repo.list_audit())
+    assert client.get("/admin/escalations?status=open").json() == []
+
+
+def test_escalation_handled_404():
+    assert client.post("/admin/escalations/nope/handled").status_code == 404

@@ -57,6 +57,33 @@ _NOTICE_PROMPT = """あなたは青年会議所(JC)の専務理事を補佐す�
 """
 
 
+_QA_PROMPT = """あなたは青年会議所(JC)猪苗代の事務局アシスタントです。
+会員からの質問に、下の「提供情報」だけを根拠にして答えてください。
+
+厳守事項:
+- 提供情報に無いことは推測で答えない。分からない場合は grounded=false にする。
+- 他の会員の個人情報(連絡先・出欠・個別の対応状況)は答えず、事務局へ案内する。
+- 事務局や専務の判断・手続きが必要な依頼は needs_human=true にする。
+- answer は敬体・200字以内。日時や場所は提供情報のとおり正確に書く。
+
+出力JSON:
+- answer: 会員への返信文
+- grounded: 提供情報だけで答えられたか(true/false)
+- needs_human: 人(専務・事務局)の対応が必要か(true/false)
+
+# 提供情報
+{context}
+
+# 直近のやり取り
+{history}
+
+# 会員の質問
+{question}
+
+# 出力(JSONのみ)
+"""
+
+
 class Generation(BaseModel):
     """LLM応答の生テキストと消費トークン。"""
 
@@ -134,6 +161,61 @@ def review_proposal(content: str) -> ReviewOutcome | None:
         return None
     return ReviewOutcome(
         review=review,
+        usage=InferenceUsage(
+            model=model,
+            input_tokens=gen.input_tokens,
+            output_tokens=gen.output_tokens,
+        ),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 会員の問い合わせ応答（F8, docs/nl-assistant-design.md §5）
+# --------------------------------------------------------------------------- #
+class QaAnswer(BaseModel):
+    answer: str
+    grounded: bool = False
+    needs_human: bool = False
+
+
+class QaOutcome(BaseModel):
+    result: QaAnswer
+    usage: InferenceUsage
+
+
+def generate_answer(
+    question: str, context: str, history: str, *, model: str, project: str, location: str
+) -> Generation:
+    """問い合わせ応答の生成（テストでモックする境界）。"""
+    prompt = _QA_PROMPT.format(
+        context=context, history=history or "（なし）", question=question
+    )
+    return _call_gemini(prompt, model=model, project=project, location=location)
+
+
+def answer_question(question: str, context: str, history: str = "") -> QaOutcome | None:
+    """会員の質問に自LOM情報だけを根拠に答える。失敗時は None（呼び側でフォールバック）。"""
+    if not question or not question.strip():
+        return None
+    model, project, location = _target()
+    try:
+        gen = generate_answer(
+            question, context, history, model=model, project=project, location=location
+        )
+        data = json.loads(gen.text)
+        answer = str(data.get("answer", "")).strip()
+        if not answer:
+            raise ValueError("answer が空です")
+        result = QaAnswer(
+            answer=answer,
+            grounded=bool(data.get("grounded", False)),
+            needs_human=bool(data.get("needs_human", False)),
+        )
+    except Exception:  # noqa: BLE001 - LLM未設定/失敗でも本処理は止めない
+        logger.exception("問い合わせ応答の生成に失敗しました")
+        return None
+    return QaOutcome(
+        result=result,
         usage=InferenceUsage(
             model=model,
             input_tokens=gen.input_tokens,
