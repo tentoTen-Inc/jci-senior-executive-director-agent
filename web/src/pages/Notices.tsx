@@ -52,6 +52,16 @@ type DeliverResult = {
   deferred: number;
   failed: number;
 };
+type NoticeAction = {
+  action_id: string;
+  title: string;
+  due: string | null;
+  assignees: string[];
+  done_by: string[];
+  status: string;
+  reminder_count: number;
+  reminded_at: string | null;
+};
 
 export default function Notices() {
   const [items, setItems] = useState<Notice[]>([]);
@@ -64,6 +74,7 @@ export default function Notices() {
   const [scopeKind, setScopeKind] = useState("all");
   const [scopeValue, setScopeValue] = useState("");
   const [draft, setDraft] = useState("");
+  const [actions, setActions] = useState<NoticeAction[]>([]);
 
   const load = (status: string) =>
     api<Notice[]>(`/notices${status ? `?status=${status}` : ""}`)
@@ -85,6 +96,15 @@ export default function Notices() {
   useEffect(() => {
     setDraft(sel?.digest?.announcement ?? "");
   }, [sel?.notice_id, sel?.digest?.announcement]);
+
+  const loadActions = (id: string) =>
+    api<NoticeAction[]>(`/notices/${id}/actions`)
+      .then(setActions)
+      .catch(() => setActions([]));
+  useEffect(() => {
+    if (sel) loadActions(sel.notice_id);
+    else setActions([]);
+  }, [sel?.notice_id]);
 
   async function submit() {
     if (!form.subject.trim() || !form.body_text.trim()) {
@@ -118,6 +138,49 @@ export default function Notices() {
     }
   }
 
+  function scopePayload() {
+    return {
+      kind: scopeKind,
+      value: scopeKind === "all" ? [] : scopeValue.split(",").map((s) => s.trim()),
+    };
+  }
+
+  async function createActions(notice: Notice) {
+    setBusy(true);
+    try {
+      const list = await api<NoticeAction[]>(`/notices/${notice.notice_id}/actions`, {
+        method: "POST",
+        body: JSON.stringify({ target_scope: scopePayload() }),
+      });
+      setActions(list);
+      setMsg(`対応タスクを${list.length}件に更新しました。`);
+    } catch (e) {
+      setMsg((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remind(notice: Notice, action: NoticeAction) {
+    const pending = action.assignees.length - action.done_by.length;
+    if (!confirm(`未対応の${pending}名へ催促を送ります。よろしいですか？`)) return;
+    setBusy(true);
+    try {
+      const res = await api<DeliverResult & { pending: number }>(
+        `/notices/${notice.notice_id}/actions/${action.action_id}/remind`,
+        { method: "POST" }
+      );
+      setMsg(
+        `催促しました: 未対応${res.pending}名 / 送信${res.sent} 保留${res.deferred} ブロック${res.blocked} 失敗${res.failed}`
+      );
+      loadActions(notice.notice_id);
+    } catch (e) {
+      setMsg((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function deliver(notice: Notice, force: boolean) {
     const scopeLabel = scopeKind === "all" ? "全員" : `${scopeKind}: ${scopeValue}`;
     if (!confirm(`この告知文を「${scopeLabel}」へLINE配信します。よろしいですか？`)) return;
@@ -127,14 +190,7 @@ export default function Notices() {
         `/notices/${notice.notice_id}/deliver`,
         {
           method: "POST",
-          body: JSON.stringify({
-            target_scope: {
-              kind: scopeKind,
-              value: scopeKind === "all" ? [] : scopeValue.split(",").map((s) => s.trim()),
-            },
-            body_text: draft,
-            force,
-          }),
+          body: JSON.stringify({ target_scope: scopePayload(), body_text: draft, force }),
         }
       );
       setSel(res.notice);
@@ -373,6 +429,73 @@ export default function Notices() {
                 </>
               )}
             </div>
+          </div>
+
+          {/* 対応状況の追跡（F5-5） */}
+          <div className="mt-4 pt-3 border-t">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="font-semibold text-navy text-sm">対応タスク</span>
+              <button
+                className="bg-slate-200 text-navy rounded px-2 py-1 text-xs"
+                disabled={busy}
+                onClick={() => createActions(sel)}
+              >
+                {actions.length ? "AI抽出のアクションを反映" : "アクションをタスク化"}
+              </button>
+              <span className="text-xs text-slate-400">
+                （対象は上で選んだ範囲。会員はLINEの「対応しました」で完了できます）
+              </span>
+            </div>
+            {actions.length === 0 ? (
+              <p className="text-sm text-slate-500">タスクはまだありません。</p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-slate-500">
+                    <th className="py-1">やること</th>
+                    <th>期限</th>
+                    <th>対応</th>
+                    <th>催促</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {actions.map((a) => {
+                    const done = a.done_by.length;
+                    const total = a.assignees.length;
+                    return (
+                      <tr key={a.action_id} className="border-t">
+                        <td className="py-1">{a.title}</td>
+                        <td className="text-slate-500">{jdate(a.due)}</td>
+                        <td>
+                          <span
+                            className={
+                              done === total ? "text-green-700" : "text-amber-700 font-medium"
+                            }
+                          >
+                            {done}/{total}
+                          </span>
+                        </td>
+                        <td className="text-slate-500">
+                          {a.reminder_count > 0 ? `${a.reminder_count}回` : "-"}
+                        </td>
+                        <td>
+                          {done < total && (
+                            <button
+                              className="bg-slate-200 text-navy rounded px-2 py-0.5 text-xs"
+                              disabled={busy}
+                              onClick={() => remind(sel, a)}
+                            >
+                              未対応者に催促
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
           </div>
         </Card>
       )}

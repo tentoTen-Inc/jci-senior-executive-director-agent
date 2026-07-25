@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from .attendance import aggregate
 from .models import DeliveryResult, EventStatus, MemberStatus
+from .notice_actions import open_action_count
 from .repository import Repository
 
 
@@ -25,6 +26,7 @@ class ActionRequired(BaseModel):
     unlinked_members: int
     open_escalations: int
     unanswered_total: int
+    open_notice_actions: int = 0  # 未対応者が残る対外連絡アクション（F5-5）
 
 
 class HomeData(BaseModel):
@@ -84,6 +86,7 @@ def build_home(repo: Repository, *, now: datetime) -> HomeData:
             unlinked_members=unlinked,
             open_escalations=len(repo.list_escalations(status="open")),
             unanswered_total=unanswered_total,
+            open_notice_actions=open_action_count(repo),
         ),
         upcoming_events=briefs[:5],
         this_week=this_week,

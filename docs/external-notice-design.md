@@ -88,7 +88,19 @@ externalNotices/{noticeId}
 ```
 > `digest` は**助言**。配信前に専務が対象・文面を確認する（画面に明記）。
 
-### 3.3 コスト記録
+### 3.3 `NoticeAction`（対応タスク・F5-3/F5-5）
+```
+noticeActions/{actionId}
+  action_id, notice_id, title, due
+  assignees: [member_id]      # 対象者
+  done_by: [member_id]        # 対応済み（未対応 = assignees - done_by）
+  status: "open"|"closed"     # 全員完了で closed
+  reminder_count, reminded_at
+```
+会員は催促メッセージの「対応しました」ボタン（postback `ntca|<action_id>|done`）で完了を記録できる。
+ホームの「要対応」に未完了タスク数を合算する。
+
+### 3.4 コスト記録
 Gemini 呼び出しは既存 `InferenceLog`（`docs/dashboard-design.md` §4.3）に
 `kind="external_notice_digest"` で記録し、月間コストKPIに合算する。
 
@@ -105,7 +117,10 @@ Gemini 呼び出しは既存 `InferenceLog`（`docs/dashboard-design.md` §4.3�
 | POST `/api/notices/{id}/archive` | 対応不要としてアーカイブ | P3-1 |
 | POST `/api/notices/import-gmail` | Gmail からの取込（dry-run 可） | P3-2 |
 | POST `/api/notices/{id}/deliver` | 対象を指定して配信（ガードレール適用・`force`で再配信） | P3-3 |
-| GET `/api/notices/{id}/actions` / POST …/{action_id}/done | 対応状況の追跡 | P3-4 |
+| POST `/api/notices/{id}/actions` | AI抽出アクションのタスク化（対象範囲を指定・冪等） | P3-4 |
+| GET `/api/notices/{id}/actions` | タスク一覧（会員単位の対応状況） | P3-4 |
+| POST `/api/notices/{id}/actions/{action_id}/done` | 事務局が代理で対応済みを記録 | P3-4 |
+| POST `/api/notices/{id}/actions/{action_id}/remind` | 未対応者だけに催促（ガードレール適用） | P3-4 |
 
 作成・生成・配信・アーカイブは監査ログ（`notice.create` / `notice.digest` / `notice.deliver` / `notice.archive`）に記録する。
 
@@ -139,7 +154,7 @@ Gemini 呼び出しは既存 `InferenceLog`（`docs/dashboard-design.md` §4.3�
 | **P3-1**（実装済み） | `ExternalNotice` モデル＋手動投入/一覧/詳細API＋Gemini要約・告知文生成（コスト記録込み）＋SPA「対外連絡」画面 | なし（Gmail設定不要で運用開始できる） |
 | **P3-2** | Gmail取込（認証・ラベル差分ポーリング・添付PDFのテキスト抽出・冪等）＋tick結線 | 専用アドレスと認証方式の確定（§7） |
 | **P3-3**（実装済み） | 対象解決（全員/委員会/役職/任意）＋配信実行（既存ガードレール流用）＋配信履歴 | P3-1 |
-| **P3-4** | アクションのタスク化・対応状況追跡・未対応者への段階催促 | P3-3 |
+| **P3-4**（実装済み） | アクションのタスク化・対応状況追跡・未対応者への催促 | P3-3 |
 
 ---
 

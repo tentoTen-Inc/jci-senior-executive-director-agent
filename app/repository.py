@@ -22,6 +22,7 @@ from .models import (
     LinkState,
     Member,
     MemberStatus,
+    NoticeAction,
     Proposal,
     ReminderPolicy,
     Settings,
@@ -88,6 +89,11 @@ class Repository(Protocol):
     def get_notice(self, notice_id: str) -> ExternalNotice | None: ...
     def get_notice_by_source_ref(self, source_ref: str) -> ExternalNotice | None: ...
     def list_notices(self, *, status: str | None = None) -> list[ExternalNotice]: ...
+    def upsert_notice_action(self, action: NoticeAction) -> None: ...
+    def get_notice_action(self, action_id: str) -> NoticeAction | None: ...
+    def list_notice_actions(
+        self, *, notice_id: str | None = None, status: str | None = None
+    ) -> list[NoticeAction]: ...
 
 
 class InMemoryRepository:
@@ -108,6 +114,7 @@ class InMemoryRepository:
         self._proposals: dict[str, Proposal] = {}
         self._inference_logs: list[InferenceLog] = []
         self._notices: dict[str, ExternalNotice] = {}
+        self._notice_actions: dict[str, NoticeAction] = {}
 
     # --- members ---
     def upsert_member(self, member: Member) -> None:
@@ -270,6 +277,24 @@ class InMemoryRepository:
             items = [n for n in items if n.status == status]
         items.sort(key=lambda n: n.received_at, reverse=True)
         return [n.model_copy(deep=True) for n in items]
+
+    def upsert_notice_action(self, action: NoticeAction) -> None:
+        self._notice_actions[action.action_id] = action.model_copy(deep=True)
+
+    def get_notice_action(self, action_id: str) -> NoticeAction | None:
+        a = self._notice_actions.get(action_id)
+        return a.model_copy(deep=True) if a else None
+
+    def list_notice_actions(
+        self, *, notice_id: str | None = None, status: str | None = None
+    ) -> list[NoticeAction]:
+        items = list(self._notice_actions.values())
+        if notice_id is not None:
+            items = [a for a in items if a.notice_id == notice_id]
+        if status is not None:
+            items = [a for a in items if a.status == status]
+        items.sort(key=lambda a: a.created_at)
+        return [a.model_copy(deep=True) for a in items]
 
 
 def utcnow() -> datetime:

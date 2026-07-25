@@ -17,7 +17,7 @@ from .delivery import execute_delivery
 from .deps import get_repo
 from .events import resolve_scope
 from .inference import record_inference
-from .line_push import member_text_sender
+from .line_push import member_messages_sender, member_text_sender
 from .llm import digest_notice
 from .llm import model_name as llm_model_name
 from .models import (
@@ -28,6 +28,7 @@ from .models import (
     NoticeHistory,
     TargetScope,
 )
+from .notice_actions import build_reminder_message, create_actions, mark_done
 
 router = APIRouter(tags=["notices"])
 
@@ -214,6 +215,151 @@ def deliver_notice(
         "notice": notice,
         "job_id": job.job_id,
         "targets": len(job.targets),
+        "sent": report.sent,
+        "blocked": report.blocked,
+        "deferred": report.deferred,
+        "failed": report.failed,
+    }
+
+
+# --------------------------------------------------------------------------- #
+# アクション追跡（F5-3/F5-5）
+# --------------------------------------------------------------------------- #
+class ActionCreate(BaseModel):
+    titles: list[str] | None = None  # 未指定なら digest.actions を使う
+    target_scope: TargetScope = TargetScope()
+    due: datetime | None = None  # 未指定なら digest.deadline
+
+
+@router.post("/notices/{notice_id}/actions")
+def create_notice_actions(
+    notice_id: str,
+    payload: ActionCreate,
+    x_goog_authenticated_user_email: str | None = Header(default=None),
+):
+    """対外連絡から対応タスクを起票する（同じ内容の再起票はしない）。"""
+    repo = get_repo()
+    notice = repo.get_notice(notice_id)
+    if notice is None:
+        raise HTTPException(status_code=404, detail="notice not found")
+
+    titles = payload.titles if payload.titles is not None else (
+        notice.digest.actions if notice.digest else []
+    )
+    if not titles:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "起票するアクションがありません。"
+                "先に要約を生成するか titles を指定してください。"
+            ),
+        )
+    targets = resolve_scope(repo, payload.target_scope)
+    if not targets:
+        raise HTTPException(
+            status_code=400, detail="対象者が0名です。対象範囲を確認してください。"
+        )
+
+    actor = _actor(x_goog_authenticated_user_email)
+    now = datetime.now()
+    created = create_actions(
+        repo, notice,
+        titles=titles,
+        assignees=[m.member_id for m in targets],
+        due=payload.due,
+        now=now,
+    )
+    if created:
+        notice.history.append(NoticeHistory(at=now, action="actions_created", by=actor))
+        repo.upsert_notice(notice)
+        write_audit(
+            repo, actor=actor, action="notice.actions.create",
+            target=notice_id, detail=f"created={len(created)}",
+        )
+    return repo.list_notice_actions(notice_id=notice_id)
+
+
+@router.get("/notices/{notice_id}/actions")
+def list_notice_actions(notice_id: str, status: str | None = None):
+    return get_repo().list_notice_actions(notice_id=notice_id, status=status)
+
+
+class ActionDone(BaseModel):
+    member_id: str
+
+
+@router.post("/notices/{notice_id}/actions/{action_id}/done")
+def mark_action_done(
+    notice_id: str,
+    action_id: str,
+    payload: ActionDone,
+    x_goog_authenticated_user_email: str | None = Header(default=None),
+):
+    """事務局が代理で対応済みを記録する（会員自身は LINE のボタンから記録）。"""
+    repo = get_repo()
+    action = repo.get_notice_action(action_id)
+    if action is None or action.notice_id != notice_id:
+        raise HTTPException(status_code=404, detail="action not found")
+    if payload.member_id not in action.assignees:
+        raise HTTPException(status_code=400, detail="対象者に含まれていない会員です。")
+    updated = mark_done(repo, action_id, payload.member_id)
+    write_audit(
+        repo, actor=_actor(x_goog_authenticated_user_email), action="notice.actions.done",
+        target=action_id, detail=payload.member_id,
+    )
+    return updated
+
+
+@router.post("/notices/{notice_id}/actions/{action_id}/remind")
+def remind_action(
+    notice_id: str,
+    action_id: str,
+    x_goog_authenticated_user_email: str | None = Header(default=None),
+):
+    """未対応者へ催促を送る（ガードレール適用・F5-5）。"""
+    repo = get_repo()
+    notice = repo.get_notice(notice_id)
+    action = repo.get_notice_action(action_id)
+    if notice is None or action is None or action.notice_id != notice_id:
+        raise HTTPException(status_code=404, detail="action not found")
+    pending = action.pending
+    if not pending:
+        raise HTTPException(status_code=409, detail="未対応者はいません。")
+
+    actor = _actor(x_goog_authenticated_user_email)
+    now = datetime.now()
+    message = build_reminder_message(notice, action)
+    job = DeliveryJob(
+        job_id=f"ntca_{action_id}_{action.reminder_count + 1}",
+        type="notice_action_reminder",
+        targets=pending,
+        idempotency_key=f"{action_id}:{action.reminder_count + 1}",
+    )
+    repo.save_delivery_job(job)
+    report = execute_delivery(
+        repo, job, message.text, now=now,
+        sender=member_messages_sender(repo, [message]),
+    )
+    if report.halted:
+        write_audit(
+            repo, actor=actor, action="notice.actions.remind.halted",
+            target=action_id, detail=", ".join(report.problems),
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=f"ガードレールにより催促を中止しました: {', '.join(report.problems)}",
+        )
+
+    action.reminder_count += 1
+    action.reminded_at = now
+    repo.upsert_notice_action(action)
+    write_audit(
+        repo, actor=actor, action="notice.actions.remind",
+        target=action_id, detail=f"pending={len(pending)} sent={report.sent}",
+    )
+    return {
+        "action": action,
+        "pending": len(pending),
         "sent": report.sent,
         "blocked": report.blocked,
         "deferred": report.deferred,

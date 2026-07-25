@@ -41,9 +41,12 @@ def repo():
 
 @pytest.fixture(autouse=True)
 def _no_real_push(monkeypatch):
+    """LINE送信をモックし、(userId, 本文) を記録する。"""
     sent: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        line_push, "push_text", lambda user_id, text: bool(sent.append((user_id, text))) or True
+        line_push,
+        "push_messages",
+        lambda user_id, messages: bool(sent.append((user_id, messages[0].text))) or True,
     )
     return sent
 

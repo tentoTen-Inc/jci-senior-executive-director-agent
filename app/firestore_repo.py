@@ -21,6 +21,7 @@ from .models import (
     LinkState,
     Member,
     MemberStatus,
+    NoticeAction,
     Proposal,
     ReminderPolicy,
     Settings,
@@ -41,6 +42,7 @@ COL_AUDIT = "auditLogs"
 COL_PROPOSALS = "proposals"
 COL_INFERENCE_LOGS = "inferenceLogs"
 COL_NOTICES = "externalNotices"
+COL_NOTICE_ACTIONS = "noticeActions"
 SETTINGS_DOC = "global"
 
 
@@ -238,3 +240,25 @@ class FirestoreRepository:
             col = col.where("status", "==", status)
         col = col.order_by("received_at", direction=Query.DESCENDING)
         return [ExternalNotice.model_validate(s.to_dict()) for s in col.stream()]
+
+    def upsert_notice_action(self, action: NoticeAction) -> None:
+        self._db.collection(COL_NOTICE_ACTIONS).document(action.action_id).set(
+            action.model_dump(mode="json")
+        )
+
+    def get_notice_action(self, action_id: str) -> NoticeAction | None:
+        snap = self._db.collection(COL_NOTICE_ACTIONS).document(action_id).get()
+        return NoticeAction.model_validate(snap.to_dict()) if snap.exists else None
+
+    def list_notice_actions(
+        self, *, notice_id: str | None = None, status: str | None = None
+    ) -> list[NoticeAction]:
+        col = self._db.collection(COL_NOTICE_ACTIONS)
+        if notice_id is not None:
+            col = col.where("notice_id", "==", notice_id)
+        if status is not None:
+            col = col.where("status", "==", status)
+        return sorted(
+            (NoticeAction.model_validate(s.to_dict()) for s in col.stream()),
+            key=lambda a: a.created_at,
+        )
