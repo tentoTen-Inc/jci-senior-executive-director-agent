@@ -45,6 +45,14 @@ function jdate(iso: string | null): string {
   return new Date(iso).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" });
 }
 
+type DeliverResult = {
+  targets: number;
+  sent: number;
+  blocked: number;
+  deferred: number;
+  failed: number;
+};
+
 export default function Notices() {
   const [items, setItems] = useState<Notice[]>([]);
   const [tab, setTab] = useState("");
@@ -52,6 +60,10 @@ export default function Notices() {
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({ subject: "", from_name: "", body_text: "" });
+  const [committees, setCommittees] = useState<string[]>([]);
+  const [scopeKind, setScopeKind] = useState("all");
+  const [scopeValue, setScopeValue] = useState("");
+  const [draft, setDraft] = useState("");
 
   const load = (status: string) =>
     api<Notice[]>(`/notices${status ? `?status=${status}` : ""}`)
@@ -60,6 +72,19 @@ export default function Notices() {
   useEffect(() => {
     load(tab);
   }, [tab]);
+
+  useEffect(() => {
+    api<{ committee: string | null }[]>("/members")
+      .then((ms) =>
+        setCommittees([...new Set(ms.map((m) => m.committee).filter((c): c is string => !!c))])
+      )
+      .catch(() => {});
+  }, []);
+
+  // 選択した連絡が変わったら、告知文のドラフトを（生成済みなら）読み込む
+  useEffect(() => {
+    setDraft(sel?.digest?.announcement ?? "");
+  }, [sel?.notice_id, sel?.digest?.announcement]);
 
   async function submit() {
     if (!form.subject.trim() || !form.body_text.trim()) {
@@ -85,6 +110,37 @@ export default function Notices() {
     try {
       const fresh = await api<Notice>(`/notices/${id}/${path}`, { method: "POST" });
       setSel(fresh);
+      load(tab);
+    } catch (e) {
+      setMsg((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deliver(notice: Notice, force: boolean) {
+    const scopeLabel = scopeKind === "all" ? "全員" : `${scopeKind}: ${scopeValue}`;
+    if (!confirm(`この告知文を「${scopeLabel}」へLINE配信します。よろしいですか？`)) return;
+    setBusy(true);
+    try {
+      const res = await api<DeliverResult & { notice: Notice }>(
+        `/notices/${notice.notice_id}/deliver`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            target_scope: {
+              kind: scopeKind,
+              value: scopeKind === "all" ? [] : scopeValue.split(",").map((s) => s.trim()),
+            },
+            body_text: draft,
+            force,
+          }),
+        }
+      );
+      setSel(res.notice);
+      setMsg(
+        `配信しました: 対象${res.targets}名 / 送信${res.sent} 保留${res.deferred} ブロック${res.blocked} 失敗${res.failed}`
+      );
       load(tab);
     } catch (e) {
       setMsg((e as Error).message);
@@ -225,12 +281,71 @@ export default function Notices() {
                       </ul>
                     </>
                   )}
-                  <div className="mt-2 text-xs text-slate-500">告知文（LINE配信用）</div>
-                  <div className="bg-white rounded p-2 whitespace-pre-wrap">
-                    {sel.digest.announcement}
+                  <div className="mt-2 text-xs text-slate-500">
+                    告知文（LINE配信用・送信前に編集できます）
                   </div>
-                  <div className="text-xs text-slate-400 mt-2">
+                  <textarea
+                    className="border rounded p-2 w-full text-sm h-24 bg-white"
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                  />
+                  <div className="text-xs text-slate-400">
                     ※ AIの助言です。配信対象と文面は専務理事が確認してください。
+                  </div>
+
+                  <div className="mt-3 pt-3 border-t">
+                    <div className="text-xs text-slate-500 mb-1">配信対象</div>
+                    <div className="flex flex-wrap gap-2 items-center">
+                      <select
+                        className="border rounded p-1 text-sm"
+                        value={scopeKind}
+                        onChange={(e) => {
+                          setScopeKind(e.target.value);
+                          setScopeValue("");
+                        }}
+                      >
+                        <option value="all">全員</option>
+                        <option value="committee">委員会</option>
+                        <option value="officer">役職</option>
+                        <option value="custom">会員ID指定</option>
+                      </select>
+                      {scopeKind === "committee" && (
+                        <select
+                          className="border rounded p-1 text-sm"
+                          value={scopeValue}
+                          onChange={(e) => setScopeValue(e.target.value)}
+                        >
+                          <option value="">選択してください</option>
+                          {committees.map((c) => (
+                            <option key={c} value={c}>
+                              {c}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      {(scopeKind === "officer" || scopeKind === "custom") && (
+                        <input
+                          className="border rounded p-1 text-sm w-56"
+                          placeholder={
+                            scopeKind === "officer" ? "例: 理事長, 専務理事" : "例: m1, m2"
+                          }
+                          value={scopeValue}
+                          onChange={(e) => setScopeValue(e.target.value)}
+                        />
+                      )}
+                      <button
+                        className="bg-brand text-white rounded px-3 py-1 text-xs"
+                        disabled={busy || !draft.trim()}
+                        onClick={() => deliver(sel, sel.status === "delivered")}
+                      >
+                        {sel.status === "delivered" ? "再配信する" : "この内容でLINE配信"}
+                      </button>
+                    </div>
+                    {sel.status === "delivered" && (
+                      <p className="text-xs text-green-700 mt-1">
+                        配信済みです（再配信すると同じ対象に再送されます）。
+                      </p>
+                    )}
                   </div>
                 </>
               ) : (

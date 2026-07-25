@@ -40,3 +40,18 @@ def push_messages(user_id: str, messages: list[Message]) -> bool:
 
 def push_text(user_id: str, text: str) -> bool:
     return push_messages(user_id, [TextMessage(text=text)])
+
+
+def member_text_sender(repo, text: str):
+    """member_id を LINE userId に解決してテキストを Push する sender を作る。
+
+    ``delivery.execute_delivery`` の sender として渡す（LINE未連携は False＝失敗扱い）。
+    """
+
+    def sender(member_id: str) -> bool:
+        member = repo.get_member(member_id)
+        if member is None or not member.line_user_id:
+            return False
+        return push_text(member.line_user_id, text)
+
+    return sender
