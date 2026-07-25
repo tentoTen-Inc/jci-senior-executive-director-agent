@@ -15,6 +15,7 @@ from .models import (
     Escalation,
     Event,
     EventStatus,
+    ExternalNotice,
     InferenceLog,
     InviteCode,
     LinkState,
@@ -39,6 +40,7 @@ COL_ESCALATIONS = "escalations"
 COL_AUDIT = "auditLogs"
 COL_PROPOSALS = "proposals"
 COL_INFERENCE_LOGS = "inferenceLogs"
+COL_NOTICES = "externalNotices"
 SETTINGS_DOC = "global"
 
 
@@ -211,3 +213,28 @@ class FirestoreRepository:
         if since is not None:
             col = col.where("at", ">=", since.isoformat())
         return [InferenceLog.model_validate(s.to_dict()) for s in col.stream()]
+
+    # --- 対外連絡 ---
+    def upsert_notice(self, notice: ExternalNotice) -> None:
+        self._db.collection(COL_NOTICES).document(notice.notice_id).set(
+            notice.model_dump(mode="json")
+        )
+
+    def get_notice(self, notice_id: str) -> ExternalNotice | None:
+        snap = self._db.collection(COL_NOTICES).document(notice_id).get()
+        return ExternalNotice.model_validate(snap.to_dict()) if snap.exists else None
+
+    def get_notice_by_source_ref(self, source_ref: str) -> ExternalNotice | None:
+        query = self._db.collection(COL_NOTICES).where("source_ref", "==", source_ref).limit(1)
+        for snap in query.stream():
+            return ExternalNotice.model_validate(snap.to_dict())
+        return None
+
+    def list_notices(self, *, status: str | None = None) -> list[ExternalNotice]:
+        from google.cloud.firestore import Query
+
+        col = self._db.collection(COL_NOTICES)
+        if status is not None:
+            col = col.where("status", "==", status)
+        col = col.order_by("received_at", direction=Query.DESCENDING)
+        return [ExternalNotice.model_validate(s.to_dict()) for s in col.stream()]

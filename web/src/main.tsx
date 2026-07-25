@@ -7,6 +7,7 @@ import Home from "./pages/Home";
 import Members from "./pages/Members";
 import Events from "./pages/Events";
 import Proposals from "./pages/Proposals";
+import Notices from "./pages/Notices";
 import Agent from "./pages/Agent";
 import SettingsPage from "./pages/Settings";
 
@@ -20,6 +21,7 @@ const router = createBrowserRouter(
         { path: "members", element: <Members /> },
         { path: "events", element: <Events /> },
         { path: "proposals", element: <Proposals /> },
+        { path: "notices", element: <Notices /> },
         { path: "agent", element: <Agent /> },
         { path: "settings", element: <SettingsPage /> },
       ],
