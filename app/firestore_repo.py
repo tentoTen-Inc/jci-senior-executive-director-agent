@@ -26,6 +26,7 @@ from .models import (
     Proposal,
     ReminderPolicy,
     Settings,
+    Survey,
 )
 
 # コレクション名
@@ -45,6 +46,7 @@ COL_INFERENCE_LOGS = "inferenceLogs"
 COL_NOTICES = "externalNotices"
 COL_NOTICE_ACTIONS = "noticeActions"
 COL_CONVERSATIONS = "conversations"
+COL_SURVEYS = "surveys"
 SETTINGS_DOC = "global"
 
 
@@ -281,4 +283,30 @@ class FirestoreRepository:
     def save_conversation(self, conversation: Conversation) -> None:
         self._db.collection(COL_CONVERSATIONS).document(conversation.member_id).set(
             conversation.model_dump(mode="json")
+        )
+
+    # --- アンケート ---
+    def upsert_survey(self, survey: Survey) -> None:
+        self._db.collection(COL_SURVEYS).document(survey.survey_id).set(
+            survey.model_dump(mode="json")
+        )
+
+    def get_survey(self, survey_id: str) -> Survey | None:
+        snap = self._db.collection(COL_SURVEYS).document(survey_id).get()
+        return Survey.model_validate(snap.to_dict()) if snap.exists else None
+
+    def get_survey_by_form_id(self, form_id: str) -> Survey | None:
+        query = self._db.collection(COL_SURVEYS).where("form_id", "==", form_id).limit(1)
+        for snap in query.stream():
+            return Survey.model_validate(snap.to_dict())
+        return None
+
+    def list_surveys(self, *, kind: str | None = None) -> list[Survey]:
+        col = self._db.collection(COL_SURVEYS)
+        if kind is not None:
+            col = col.where("kind", "==", kind)
+        return sorted(
+            (Survey.model_validate(s.to_dict()) for s in col.stream()),
+            key=lambda s: (s.synced_at or datetime.min),
+            reverse=True,
         )

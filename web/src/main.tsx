@@ -8,6 +8,7 @@ import Members from "./pages/Members";
 import Events from "./pages/Events";
 import Proposals from "./pages/Proposals";
 import Notices from "./pages/Notices";
+import Surveys from "./pages/Surveys";
 import Agent from "./pages/Agent";
 import SettingsPage from "./pages/Settings";
 
@@ -22,6 +23,7 @@ const router = createBrowserRouter(
         { path: "events", element: <Events /> },
         { path: "proposals", element: <Proposals /> },
         { path: "notices", element: <Notices /> },
+        { path: "surveys", element: <Surveys /> },
         { path: "agent", element: <Agent /> },
         { path: "settings", element: <SettingsPage /> },
       ],

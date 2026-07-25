@@ -325,6 +325,62 @@ class ExternalNotice(BaseModel):
     history: list[NoticeHistory] = Field(default_factory=list)
 
 
+# --------------------------------------------------------------------------- #
+# 例会アンケート（docs/survey-design.md §3, F7）
+# --------------------------------------------------------------------------- #
+class SurveyQuestion(BaseModel):
+    question_id: str
+    title: str
+    type: str  # scale | text | choice
+    section: str | None = None  # 直前のセクション見出し
+    scale_low: int | None = None
+    scale_high: int | None = None
+    options: list[str] = Field(default_factory=list)
+
+
+class SurveyResponse(BaseModel):
+    response_id: str
+    submitted_at: datetime | None = None
+    respondent_email: str | None = None
+    respondent_name: str | None = None  # 氏名設問の値
+    member_id: str | None = None  # 会員照合の結果（P4-2）
+    answers: dict[str, str] = Field(default_factory=dict)  # question_id -> 値
+
+
+class SurveyTheme(BaseModel):
+    label: str
+    count: int = 0
+    examples: list[str] = Field(default_factory=list)
+
+
+class SurveyDigest(BaseModel):
+    """自由記述の Gemini 生成物（集計値とは分けて保持する）。"""
+
+    summary: str
+    themes: list[SurveyTheme] = Field(default_factory=list)
+    sentiment: dict[str, int] = Field(default_factory=dict)  # positive/neutral/negative の件数
+    improvements: list[str] = Field(default_factory=list)
+    model: str | None = None
+    generated_at: datetime | None = None
+
+
+class Survey(BaseModel):
+    """Googleフォームのアンケート1回分（docs/survey-design.md §3.1）。"""
+
+    survey_id: str
+    lom_id: str = "inawashiro"
+    form_id: str
+    title: str
+    kind: str = "internal"  # internal(対内) | external(対外)
+    event_id: str | None = None
+    questions: list[SurveyQuestion] = Field(default_factory=list)
+    responses: list[SurveyResponse] = Field(default_factory=list)
+    digest: SurveyDigest | None = None
+    synced_at: datetime | None = None
+    reminder_count: int = 0
+    reminded_at: datetime | None = None
+
+
 class ConversationTurn(BaseModel):
     at: datetime
     role: str  # user | assistant
