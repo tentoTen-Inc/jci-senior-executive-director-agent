@@ -11,6 +11,7 @@ from typing import Protocol
 from .models import (
     Attendance,
     AuditLog,
+    Conversation,
     DeliveryJob,
     DeliveryLog,
     Escalation,
@@ -69,6 +70,7 @@ class Repository(Protocol):
 
     # --- escalations ---
     def save_escalation(self, escalation: Escalation) -> None: ...
+    def get_escalation(self, escalation_id: str) -> Escalation | None: ...
     def list_escalations(self, *, status: str | None = None) -> list[Escalation]: ...
 
     # --- audit ---
@@ -95,6 +97,10 @@ class Repository(Protocol):
         self, *, notice_id: str | None = None, status: str | None = None
     ) -> list[NoticeAction]: ...
 
+    # --- 会話履歴 ---
+    def get_conversation(self, member_id: str) -> Conversation | None: ...
+    def save_conversation(self, conversation: Conversation) -> None: ...
+
 
 class InMemoryRepository:
     """テスト・ローカル用のインメモリ実装。"""
@@ -115,6 +121,7 @@ class InMemoryRepository:
         self._inference_logs: list[InferenceLog] = []
         self._notices: dict[str, ExternalNotice] = {}
         self._notice_actions: dict[str, NoticeAction] = {}
+        self._conversations: dict[str, Conversation] = {}
 
     # --- members ---
     def upsert_member(self, member: Member) -> None:
@@ -219,10 +226,15 @@ class InMemoryRepository:
     def save_escalation(self, escalation: Escalation) -> None:
         self._escalations[escalation.escalation_id] = escalation.model_copy(deep=True)
 
+    def get_escalation(self, escalation_id: str) -> Escalation | None:
+        e = self._escalations.get(escalation_id)
+        return e.model_copy(deep=True) if e else None
+
     def list_escalations(self, *, status: str | None = None) -> list[Escalation]:
         items = list(self._escalations.values())
         if status is not None:
             items = [e for e in items if e.status == status]
+        items.sort(key=lambda e: e.created_at, reverse=True)
         return [e.model_copy(deep=True) for e in items]
 
     # --- audit ---
@@ -295,6 +307,14 @@ class InMemoryRepository:
             items = [a for a in items if a.status == status]
         items.sort(key=lambda a: a.created_at)
         return [a.model_copy(deep=True) for a in items]
+
+    # --- 会話履歴 ---
+    def get_conversation(self, member_id: str) -> Conversation | None:
+        c = self._conversations.get(member_id)
+        return c.model_copy(deep=True) if c else None
+
+    def save_conversation(self, conversation: Conversation) -> None:
+        self._conversations[conversation.member_id] = conversation.model_copy(deep=True)
 
 
 def utcnow() -> datetime:

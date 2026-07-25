@@ -296,6 +296,39 @@ def audit_logs(limit: int = 100):
 
 
 # --------------------------------------------------------------------------- #
+# 取次・問い合わせ（F8-3 のエスカレーション）
+# --------------------------------------------------------------------------- #
+@router.get("/escalations")
+def list_escalations(status: str | None = None):
+    """会員からの取次依頼・エージェントが答えられなかった質問の一覧（新しい順）。"""
+    repo = get_repo()
+    items = repo.list_escalations(status=status)
+    members = {m.member_id: m.name for m in repo.list_members()}
+    return [
+        {**e.model_dump(mode="json"), "member_name": members.get(e.member_id)}
+        for e in items
+    ]
+
+
+@router.post("/escalations/{escalation_id}/handled")
+def mark_escalation_handled(
+    escalation_id: str,
+    x_goog_authenticated_user_email: str | None = Header(default=None),
+):
+    repo = get_repo()
+    esc = repo.get_escalation(escalation_id)
+    if esc is None:
+        raise HTTPException(status_code=404, detail="escalation not found")
+    esc.status = "handled"
+    repo.save_escalation(esc)
+    write_audit(
+        repo, actor=_actor(x_goog_authenticated_user_email),
+        action="escalation.handled", target=escalation_id,
+    )
+    return esc
+
+
+# --------------------------------------------------------------------------- #
 # 名簿・招待コード
 # --------------------------------------------------------------------------- #
 @router.get("/members")
