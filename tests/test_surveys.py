@@ -447,3 +447,132 @@ def test_remind_body_override_and_no_pending(repo, monkeypatch):
 def test_pending_and_remind_404():
     assert client.get("/api/surveys/nope/pending").status_code == 404
     assert client.post("/api/surveys/nope/remind").status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# レポート・通知・トレンド（P4-3 / F7-4/F7-5）
+# --------------------------------------------------------------------------- #
+def seed_officer(repo):
+    from app.models import Member
+
+    repo.upsert_member(Member(
+        member_id="of1", name="理事長", line_user_id="UOF", officer_role="理事長",
+    ))
+
+
+def digest_it(monkeypatch, sid):
+    monkeypatch.setattr(
+        llm, "generate_survey_digest",
+        lambda texts, **kw: llm.Generation(text=DIGEST_JSON),
+    )
+    client.post(f"/api/surveys/{sid}/digest")
+
+
+def test_report_contains_quantitative_and_qualitative(repo, monkeypatch):
+    from app.survey_report import build_report
+
+    seed_members(repo)
+    sid = import_form().json()["survey_id"]
+    digest_it(monkeypatch, sid)
+
+    text = build_report(repo, repo.get_survey(sid), now=NOW)
+    assert "# 2026年度 4月例会アンケート アンケート集計" in text
+    assert "区分: 対内" in text
+    assert "回答数: 2件" in text
+    assert "総合平均: 4.0（5段階）" in text
+    assert "回答率: 67%（2/3名）" in text  # m1,m2 が回答、m3 が未提出
+    assert "| Q1. 意義を再認識できましたか？ | 4.0 | 2 | 0 / 0 / 1 / 0 / 1 |" in text
+    assert "全体に好意的。会場案内に改善余地。" in text
+    assert "感情傾向: 肯定 1 / 中立 0 / 否定 1" in text
+    assert "会場までの案内表示を増やす" in text
+    assert "要約・分類はAIの助言です" in text
+
+
+def test_report_without_digest_says_so(repo):
+    from app.survey_report import build_report
+
+    sid = import_form().json()["survey_id"]
+    text = build_report(repo, repo.get_survey(sid), now=NOW)
+    assert "未生成です" in text
+
+
+def test_report_notifies_officers(repo, monkeypatch):
+    from app import line_push
+    from app.models import QuietHours, Settings
+
+    sent: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        line_push, "push_messages",
+        lambda user_id, messages: bool(sent.append((user_id, messages[0].text))) or True,
+    )
+    seed_members(repo)
+    seed_officer(repo)
+    repo.save_settings(Settings(quiet_hours=QuietHours(start="00:00", end="00:00")))
+    sid = import_form().json()["survey_id"]
+    digest_it(monkeypatch, sid)
+
+    res = client.post(f"/api/surveys/{sid}/report", json={}, headers=IAP)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["notified"] is True and body["sent"] == 1
+    assert "アンケート集計" in body["report"]
+    assert [u for u, _ in sent] == ["UOF"]  # 五役のみ
+    text = sent[0][1]
+    assert "回答 2/4名" in text  # 五役を含めた対象4名に対する回答2名
+    assert "総合平均 4.0（5段階）" in text
+    assert "要約(AI): 全体に好意的" in text
+    assert any(a.action == "survey.report" for a in repo.list_audit())
+
+
+def test_report_without_notify_skips_delivery(repo, monkeypatch):
+    from app import line_push
+
+    sent: list[str] = []
+    monkeypatch.setattr(
+        line_push, "push_messages", lambda u, m: bool(sent.append(u)) or True
+    )
+    seed_officer(repo)
+    sid = import_form().json()["survey_id"]
+    res = client.post(f"/api/surveys/{sid}/report", json={"notify": False})
+    assert res.json()["notified"] is False
+    assert sent == []
+
+
+def test_report_requires_officers(repo):
+    sid = import_form().json()["survey_id"]
+    res = client.post(f"/api/surveys/{sid}/report", json={})
+    assert res.status_code == 400
+    assert "五役" in res.json()["detail"]
+
+
+def test_report_404():
+    assert client.post("/api/surveys/nope/report", json={}).status_code == 404
+
+
+def test_trends_are_ordered_oldest_first(repo, monkeypatch):
+    import_form()  # 総合平均 4.0
+    low = {
+        "form": FORM_PAYLOAD["form"],
+        "responses": [{
+            "responseId": "rz", "createTime": "2026-06-01T00:00:00Z",
+            "answers": {
+                "q1": {"textAnswers": {"answers": [{"value": "2"}]}},
+                "q2": {"textAnswers": {"answers": [{"value": "2"}]}},
+            },
+        }],
+    }
+    monkeypatch.setattr(forms, "fetch_form", lambda form_id: low)
+    import_form(form_id="form2")
+
+    points = client.get("/api/surveys/trends").json()
+    assert [p["overall_average"] for p in points] == [4.0, 2.0]  # 取込順（古い順）
+    assert points[0]["responses"] == 2 and points[1]["responses"] == 1
+
+
+def test_trends_kind_filter_and_route_not_shadowed(repo):
+    import_form()
+    import_form(form_id="fx", kind="external")
+    assert len(client.get("/api/surveys/trends").json()) == 2
+    assert len(client.get("/api/surveys/trends?kind=external").json()) == 1
+    # /surveys/trends が /surveys/{survey_id} に飲まれていない
+    assert client.get("/api/surveys/nope").status_code == 404
