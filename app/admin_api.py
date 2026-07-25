@@ -82,6 +82,7 @@ class EventCreate(BaseModel):
     target_scope: TargetScope = TargetScope()
     attendance_deadline: datetime | None = None
     reminder_policy_id: str | None = None
+    quorum: int | None = None  # 定足数（人数・F4-5）
     status: EventStatus = EventStatus.open
 
 
@@ -111,6 +112,7 @@ def get_event(event_id: str):
 # --------------------------------------------------------------------------- #
 class AttendanceUpdate(BaseModel):
     status: AttendanceStatus
+    proxy_member_id: str | None = None  # 委任先（status=委任 のとき・F4-5）
 
 
 @router.get("/events/{event_id}/attendances")
@@ -135,6 +137,15 @@ def update_attendance(
     if repo.get_event(event_id) is None:
         raise HTTPException(status_code=404, detail="event not found")
     att = record_attendance(repo, event_id, member_id, payload.status, now=datetime.now())
+    if payload.proxy_member_id is not None:
+        if repo.get_member(payload.proxy_member_id) is None:
+            raise HTTPException(status_code=400, detail="委任先の会員が見つかりません。")
+        if payload.status != AttendanceStatus.委任:
+            raise HTTPException(
+                status_code=400, detail="委任先は status=委任 のときだけ設定できます。"
+            )
+        att.proxy_member_id = payload.proxy_member_id
+        repo.upsert_attendance(att)
     return att
 
 
@@ -145,9 +156,12 @@ def export_attendances_csv(event_id: str):
     if event is None:
         raise HTTPException(status_code=404, detail="event not found")
     by_member = {a.member_id: a for a in repo.list_attendances(event_id)}
+    names = {m.member_id: m.name for m in repo.list_members()}
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["member_id", "name", "committee", "status", "late_leave", "absence_reasons"])
+    writer.writerow([
+        "member_id", "name", "committee", "status", "proxy", "late_leave", "absence_reasons",
+    ])
     for m in resolve_targets(repo, event):
         att = by_member.get(m.member_id)
         status = att.status.value if att else AttendanceStatus.未回答.value
@@ -156,6 +170,8 @@ def export_attendances_csv(event_id: str):
             m.name,
             m.committee or "",
             status,
+            (names.get(att.proxy_member_id, att.proxy_member_id) if att and att.proxy_member_id
+             else ""),
             (att.late_leave.value if att and att.late_leave else ""),
             ",".join(r.value for r in att.absence_reasons) if att else "",
         ])

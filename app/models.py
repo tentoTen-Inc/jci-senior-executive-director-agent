@@ -175,6 +175,7 @@ class Event(BaseModel):
     material_deadline: datetime | None = None
     delivery_at: datetime | None = None
     reminder_policy_id: str | None = None
+    quorum: int | None = None  # 定足数（人数）。理事会等で判定に使う（F4-5）
     status: EventStatus = EventStatus.draft
 
 
@@ -182,6 +183,7 @@ class Attendance(BaseModel):
     event_id: str
     member_id: str
     status: AttendanceStatus = AttendanceStatus.未回答
+    proxy_member_id: str | None = None  # 委任先の会員（委任状・代理出席, F4-5）
     late_leave: LateLeave | None = None
     absence_reasons: list[AbsenceReason] = Field(default_factory=list)
     free_text: str | None = None

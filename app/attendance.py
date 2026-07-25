@@ -73,6 +73,13 @@ class AttendanceSummary(BaseModel):
     unanswered: int
     attendance_rate: float  # 出席+Web出席 / 対象者
     unanswered_member_ids: list[str]
+    # 定足数判定の補助（F4-5）。委任を数えるかは規約次第なので両方を返す。
+    present: int = 0  # 出席＋Web出席
+    proxies: int = 0  # 委任
+    present_with_proxies: int = 0  # 出席＋Web出席＋委任
+    quorum: int | None = None  # イベントに設定された定足数（人数）
+    quorum_met: bool | None = None  # 委任を含めて充足しているか
+    quorum_met_without_proxies: bool | None = None  # 委任を除いて充足しているか
 
 
 def aggregate(repo: Repository, event_id: str) -> AttendanceSummary:
@@ -101,6 +108,8 @@ def aggregate(repo: Repository, event_id: str) -> AttendanceSummary:
 
     total = len(target_ids)
     rate = round(present / total, 3) if total else 0.0
+    proxies = counts[AttendanceStatus.委任.value]
+    quorum = event.quorum if event else None
     return AttendanceSummary(
         event_id=event_id,
         total_targets=total,
@@ -109,4 +118,10 @@ def aggregate(repo: Repository, event_id: str) -> AttendanceSummary:
         unanswered=total - answered,
         attendance_rate=rate,
         unanswered_member_ids=unanswered_ids,
+        present=present,
+        proxies=proxies,
+        present_with_proxies=present + proxies,
+        quorum=quorum,
+        quorum_met=(present + proxies >= quorum) if quorum is not None else None,
+        quorum_met_without_proxies=(present >= quorum) if quorum is not None else None,
     )

@@ -42,15 +42,24 @@ def build_summary_text(repo: Repository, event_id: str) -> str:
     unanswered = "、".join(names.get(mid, mid) for mid in s.unanswered_member_ids) or "なし"
 
     c = s.counts
-    return (
-        f"【出欠集計】{event.title}\n"
+    lines = [
+        f"【出欠集計】{event.title}",
         f"対象 {s.total_targets}名 / 回答 {s.answered}名（回答率 "
-        f"{round(s.answered / s.total_targets * 100) if s.total_targets else 0}%）\n"
+        f"{round(s.answered / s.total_targets * 100) if s.total_targets else 0}%）",
         f"出席 {c.get('出席', 0)} / Web出席 {c.get('Web出席', 0)} / "
-        f"欠席 {c.get('欠席', 0)} / 未回答 {c.get('未回答', 0)}\n"
-        f"出席率 {round(s.attendance_rate * 100)}%\n"
-        f"未回答者: {unanswered}"
-    )
+        f"欠席 {c.get('欠席', 0)} / 委任 {c.get('委任', 0)} / 未回答 {c.get('未回答', 0)}",
+        f"出席率 {round(s.attendance_rate * 100)}%",
+    ]
+    if s.quorum is not None:
+        # 委任を数えるかは規約次第のため両方を示す（F4-5 は判定の「補助」）
+        judge = "充足" if s.quorum_met else "不足"
+        judge_wo = "充足" if s.quorum_met_without_proxies else "不足"
+        lines.append(
+            f"定足数 {s.quorum}名: 委任含む {s.present_with_proxies}名→{judge} / "
+            f"委任除く {s.present}名→{judge_wo}"
+        )
+    lines.append(f"未回答者: {unanswered}")
+    return "\n".join(lines)
 
 
 def plan_summary_notification(repo: Repository, event_id: str, *, now: datetime) -> DeliveryJob:
