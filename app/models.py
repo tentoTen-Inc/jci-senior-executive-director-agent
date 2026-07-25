@@ -268,6 +268,61 @@ class AuditLog(BaseModel):
     detail: str | None = None
 
 
+# --------------------------------------------------------------------------- #
+# 対外連絡（docs/external-notice-design.md §3, F5）
+# --------------------------------------------------------------------------- #
+class NoticeAttachment(BaseModel):
+    name: str
+    mime: str | None = None
+    storage_uri: str | None = None
+    text_excerpt: str | None = None  # PDF等から抽出した本文抜粋
+
+
+class NoticeDigest(BaseModel):
+    """Gemini による生成物。原文（body_text）とは切り分けて保持する（F5-6）。"""
+
+    summary: str
+    announcement: str  # メンバー向け告知文（LINE配信用）
+    audience_hint: str | None = None  # 「全員」「総務委員会」「出向者」等の推定対象
+    deadline: datetime | None = None
+    actions: list[str] = Field(default_factory=list)
+    model: str | None = None
+    generated_at: datetime | None = None
+
+
+class NoticeDelivery(BaseModel):
+    """配信結果（P3-3 で記録）。"""
+
+    job_id: str
+    delivered_at: datetime
+    target_count: int = 0
+
+
+class NoticeHistory(BaseModel):
+    at: datetime
+    action: str
+    by: str = "system"
+
+
+class ExternalNotice(BaseModel):
+    """ブロック協議会等からの対外連絡（docs/external-notice-design.md §3.1）。"""
+
+    notice_id: str
+    lom_id: str = "inawashiro"
+    source: str = "manual"  # gmail | manual
+    source_ref: str | None = None  # Gmail message id / 本文ハッシュ（冪等キー）
+    received_at: datetime
+    from_addr: str | None = None
+    from_name: str | None = None
+    subject: str
+    body_text: str  # 原文（不変）
+    attachments: list[NoticeAttachment] = Field(default_factory=list)
+    digest: NoticeDigest | None = None
+    status: str = "new"  # new | reviewed | delivered | archived
+    delivery: NoticeDelivery | None = None
+    history: list[NoticeHistory] = Field(default_factory=list)
+
+
 class InferenceUsage(BaseModel):
     """LLM 1回の呼び出しで消費したトークン（プロバイダ応答から取得）。"""
 

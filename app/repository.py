@@ -16,6 +16,7 @@ from .models import (
     Escalation,
     Event,
     EventStatus,
+    ExternalNotice,
     InferenceLog,
     InviteCode,
     LinkState,
@@ -82,6 +83,12 @@ class Repository(Protocol):
     def save_inference_log(self, log: InferenceLog) -> None: ...
     def list_inference_logs(self, *, since: datetime | None = None) -> list[InferenceLog]: ...
 
+    # --- 対外連絡 ---
+    def upsert_notice(self, notice: ExternalNotice) -> None: ...
+    def get_notice(self, notice_id: str) -> ExternalNotice | None: ...
+    def get_notice_by_source_ref(self, source_ref: str) -> ExternalNotice | None: ...
+    def list_notices(self, *, status: str | None = None) -> list[ExternalNotice]: ...
+
 
 class InMemoryRepository:
     """テスト・ローカル用のインメモリ実装。"""
@@ -100,6 +107,7 @@ class InMemoryRepository:
         self._audit: list[AuditLog] = []
         self._proposals: dict[str, Proposal] = {}
         self._inference_logs: list[InferenceLog] = []
+        self._notices: dict[str, ExternalNotice] = {}
 
     # --- members ---
     def upsert_member(self, member: Member) -> None:
@@ -241,6 +249,27 @@ class InMemoryRepository:
         if since is not None:
             items = [x for x in items if x.at >= since]
         return [x.model_copy(deep=True) for x in items]
+
+    # --- 対外連絡 ---
+    def upsert_notice(self, notice: ExternalNotice) -> None:
+        self._notices[notice.notice_id] = notice.model_copy(deep=True)
+
+    def get_notice(self, notice_id: str) -> ExternalNotice | None:
+        n = self._notices.get(notice_id)
+        return n.model_copy(deep=True) if n else None
+
+    def get_notice_by_source_ref(self, source_ref: str) -> ExternalNotice | None:
+        for n in self._notices.values():
+            if n.source_ref == source_ref:
+                return n.model_copy(deep=True)
+        return None
+
+    def list_notices(self, *, status: str | None = None) -> list[ExternalNotice]:
+        items = list(self._notices.values())
+        if status is not None:
+            items = [n for n in items if n.status == status]
+        items.sort(key=lambda n: n.received_at, reverse=True)
+        return [n.model_copy(deep=True) for n in items]
 
 
 def utcnow() -> datetime:

@@ -20,7 +20,8 @@
 
 ### Out of Scope（当面）
 - 委員長・一般会員向けの閲覧画面（ロール拡張は将来）。
-- 対外連絡（F5）・アンケート（F7）の専用画面（Phase3以降、後続機能と同時）。
+- アンケート（F7）の専用画面（Phase3以降、後続機能と同時）。
+  ※ 対外連絡（F5）の画面は Phase3 で追加済み（`/app/notices`・`docs/external-notice-design.md`）。
 
 ---
 
@@ -59,6 +60,7 @@ SPA のルーティング（`/app` 配下）:
 | `/app/members` | 会員管理 | 会員一覧/編集・LINE連携状況・招待コード発行/配布状況・出欠率履歴 |
 | `/app/events` | 出欠管理 | イベント一覧→詳細（出欠表・手動修正・催促）・出席率トレンド |
 | `/app/proposals` | 議案ライフサイクル | カンバン・委員会別提出マトリクス・形式/LLMレビュー |
+| `/app/notices` | 対外連絡（F5・Phase3） | 取込一覧・AI要約/告知文と原文の並置（`docs/external-notice-design.md`） |
 | `/app/agent` | エージェントKPI | 業務/AI品質/運用KPI・配信ログ・コスト |
 | `/app/settings` | 設定・監査 | 静音/レート/催促ポリシー・キルスイッチ・監査ログ |
 
