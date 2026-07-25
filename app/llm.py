@@ -57,6 +57,27 @@ _NOTICE_PROMPT = """あなたは青年会議所(JC)の専務理事を補佐す�
 """
 
 
+_INTENT_PROMPT = """会員のメッセージから、どのイベントの出欠をどう回答したいのかを推定してください。
+
+厳守事項:
+- event_id は「候補イベント」のIDから選ぶ。どれか判断できなければ null。
+- status は 出席 / Web出席 / 欠席 / 委任 のいずれか。判断できなければ null。
+- 推測が曖昧な場合や、出欠回答の意図が読み取れない場合は confident=false にする。
+
+出力JSON:
+- event_id: 対象イベントのID(または null)
+- status: 出欠(または null)
+- confident: 明確に読み取れたか(true/false)
+
+# 候補イベント
+{events}
+
+# 会員のメッセージ
+{text}
+
+# 出力(JSONのみ)
+"""
+
 _QA_PROMPT = """あなたは青年会議所(JC)猪苗代の事務局アシスタントです。
 会員からの質問に、下の「提供情報」だけを根拠にして答えてください。
 
@@ -161,6 +182,56 @@ def review_proposal(content: str) -> ReviewOutcome | None:
         return None
     return ReviewOutcome(
         review=review,
+        usage=InferenceUsage(
+            model=model,
+            input_tokens=gen.input_tokens,
+            output_tokens=gen.output_tokens,
+        ),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 自然文からの出欠意図解釈（F4-7）
+# --------------------------------------------------------------------------- #
+class AttendanceIntent(BaseModel):
+    event_id: str | None = None
+    status: str | None = None  # 出席 | Web出席 | 欠席 | 委任
+    confident: bool = False
+
+
+class IntentOutcome(BaseModel):
+    intent: AttendanceIntent
+    usage: InferenceUsage
+
+
+def generate_attendance_intent(
+    text: str, events: str, *, model: str, project: str, location: str
+) -> Generation:
+    """出欠意図の解釈（テストでモックする境界）。"""
+    prompt = _INTENT_PROMPT.format(text=text, events=events)
+    return _call_gemini(prompt, model=model, project=project, location=location)
+
+
+def parse_attendance_intent(text: str, events: str) -> IntentOutcome | None:
+    """自然文から「どのイベントを・どの出欠で」回答したいかを推定する。失敗時は None。"""
+    if not text or not text.strip() or not events.strip():
+        return None
+    model, project, location = _target()
+    try:
+        gen = generate_attendance_intent(
+            text, events, model=model, project=project, location=location
+        )
+        data = json.loads(gen.text)
+        intent = AttendanceIntent(
+            event_id=(str(data["event_id"]) if data.get("event_id") else None),
+            status=(str(data["status"]) if data.get("status") else None),
+            confident=bool(data.get("confident", False)),
+        )
+    except Exception:  # noqa: BLE001 - LLM未設定/失敗でも本処理は止めない
+        logger.exception("出欠意図の解釈に失敗しました")
+        return None
+    return IntentOutcome(
+        intent=intent,
         usage=InferenceUsage(
             model=model,
             input_tokens=gen.input_tokens,

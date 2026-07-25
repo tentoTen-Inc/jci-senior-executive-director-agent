@@ -17,6 +17,7 @@ from linebot.v3.messaging import (
 )
 
 from .assistant import answer_member_question
+from .attendance_intent import try_attendance_intent
 from .events import resolve_targets
 from .line_messages import build_attendance_request
 from .models import (
@@ -129,6 +130,12 @@ def handle_member_text(
     if any(k in t for k in ("自分の出欠", "出欠状況", "確認")):
         return [my_attendance_message(repo, member, now)]
     if any(k in t for k in ("出欠を回答", "回答", "出席", "欠席")):
+        # 「来週の例会は欠席で」のような自由文は、対象と出欠を解釈して確認する（F4-7）。
+        # メニュー由来の定型文や解釈できない場合は従来の出欠依頼を返す。
+        if not text.strip().startswith("menu|"):
+            intent = try_attendance_intent(repo, member, t, now=now)
+            if intent is not None:
+                return intent
         return [answer_prompt_message(repo, member, now)]
     if any(k in t for k in ("事務局", "連絡", "問い合わせ", "問合せ")):
         return [record_contact(repo, member, now)]
