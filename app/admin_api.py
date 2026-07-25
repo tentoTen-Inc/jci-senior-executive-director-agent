@@ -26,12 +26,15 @@ from .meeting_package import build_package
 from .members_view import attendance_history, invite_status
 from .models import (
     AttendanceStatus,
+    Contact,
     DeliveryJob,
     DeliveryStatus,
     Event,
     EventStatus,
     EventType,
     Member,
+    MemberStatus,
+    MemberType,
     ReminderPolicy,
     Settings,
     TargetScope,
@@ -45,6 +48,15 @@ router = APIRouter(tags=["admin"])
 
 def _actor(email: str | None) -> str:
     return email or "unknown"
+
+
+def _set_fields(payload: BaseModel) -> dict:
+    """明示的に指定された項目だけを取り出す（部分更新用）。
+
+    ``model_dump`` はネストしたモデルを dict に落としてしまい、``model_copy(update=...)``
+    は検証しないため、型付きの値を保つよう属性から取る。
+    """
+    return {name: getattr(payload, name) for name in payload.model_fields_set}
 
 
 @router.get("/home")
@@ -88,10 +100,17 @@ class EventCreate(BaseModel):
 
 
 @router.post("/events")
-def create_event(payload: EventCreate):
+def create_event(
+    payload: EventCreate,
+    x_goog_authenticated_user_email: str | None = Header(default=None),
+):
     repo = get_repo()
     event = Event(event_id=f"ev_{uuid.uuid4().hex[:10]}", **payload.model_dump())
     repo.upsert_event(event)
+    write_audit(
+        repo, actor=_actor(x_goog_authenticated_user_email), action="event.create",
+        target=event.event_id, detail=event.title,
+    )
     return event
 
 
@@ -106,6 +125,44 @@ def get_event(event_id: str):
     if event is None:
         raise HTTPException(status_code=404, detail="event not found")
     return {"event": event, "summary": aggregate(get_repo(), event_id)}
+
+
+class EventUpdate(BaseModel):
+    """イベントの編集。指定した項目だけ更新する（F10-5）。"""
+
+    type: EventType | None = None
+    title: str | None = None
+    datetime_start: datetime | None = None
+    datetime_end: datetime | None = None
+    location: str | None = None
+    target_scope: TargetScope | None = None
+    attendance_deadline: datetime | None = None
+    material_deadline: datetime | None = None
+    reminder_policy_id: str | None = None
+    quorum: int | None = None
+    status: EventStatus | None = None
+
+
+@router.put("/events/{event_id}")
+def update_event(
+    event_id: str,
+    payload: EventUpdate,
+    x_goog_authenticated_user_email: str | None = Header(default=None),
+):
+    repo = get_repo()
+    event = repo.get_event(event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="event not found")
+    data = _set_fields(payload)
+    if "title" in data and not (data["title"] or "").strip():
+        raise HTTPException(status_code=400, detail="タイトルは必須です。")
+    updated = event.model_copy(update=data)
+    repo.upsert_event(updated)
+    write_audit(
+        repo, actor=_actor(x_goog_authenticated_user_email), action="event.update",
+        target=event_id, detail=",".join(sorted(data)),
+    )
+    return updated
 
 
 # --------------------------------------------------------------------------- #
@@ -386,6 +443,80 @@ def member_attendance_history(member_id: str):
 def upsert_member(member: Member):
     get_repo().upsert_member(member)
     return member
+
+
+class MemberCreate(BaseModel):
+    """会員の新規登録（画面から必要最小限の項目で追加する・F10-5）。"""
+
+    name: str
+    kana: str | None = None
+    committee: str | None = None
+    committee_role: str | None = None
+    officer_role: str | None = None
+    member_type: MemberType = MemberType.regular
+    contact: Contact = Contact()
+
+
+class MemberUpdate(BaseModel):
+    """会員の編集。指定した項目だけ更新する（F10-5）。"""
+
+    name: str | None = None
+    kana: str | None = None
+    committee: str | None = None
+    committee_role: str | None = None
+    officer_role: str | None = None
+    member_type: MemberType | None = None
+    status: MemberStatus | None = None
+    contact: Contact | None = None
+
+
+@router.post("/members/new")
+def create_member(
+    payload: MemberCreate,
+    x_goog_authenticated_user_email: str | None = Header(default=None),
+):
+    """会員を1名追加する。※ `/members/{id}` より前に定義すること（先着ルーティング）。"""
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="氏名は必須です。")
+    repo = get_repo()
+    member = Member(member_id=f"mem_{uuid.uuid4().hex[:10]}", **payload.model_dump())
+    repo.upsert_member(member)
+    write_audit(
+        repo, actor=_actor(x_goog_authenticated_user_email), action="member.create",
+        target=member.member_id, detail=member.name,
+    )
+    return member
+
+
+@router.get("/members/{member_id}")
+def get_member(member_id: str):
+    member = get_repo().get_member(member_id)
+    if member is None:
+        raise HTTPException(status_code=404, detail="member not found")
+    return member
+
+
+@router.put("/members/{member_id}")
+def update_member(
+    member_id: str,
+    payload: MemberUpdate,
+    x_goog_authenticated_user_email: str | None = Header(default=None),
+):
+    """会員情報を更新する。LINE連携（line_user_id）はここでは変更しない。"""
+    repo = get_repo()
+    member = repo.get_member(member_id)
+    if member is None:
+        raise HTTPException(status_code=404, detail="member not found")
+    data = _set_fields(payload)
+    if "name" in data and not (data["name"] or "").strip():
+        raise HTTPException(status_code=400, detail="氏名は必須です。")
+    updated = member.model_copy(update=data)
+    repo.upsert_member(updated)
+    write_audit(
+        repo, actor=_actor(x_goog_authenticated_user_email), action="member.update",
+        target=member_id, detail=",".join(sorted(data)),
+    )
+    return updated
 
 
 @router.post("/members/{member_id}/invite")

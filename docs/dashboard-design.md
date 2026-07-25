@@ -151,6 +151,8 @@ inferenceLogs/{id}
 | メソッド/パス | 用途 |
 |---|---|
 | GET `/api/members` / POST `/api/members` | 会員一覧/upsert |
+| POST `/api/members/new`, GET/PUT `/api/members/{id}` | 会員の追加・取得・編集（F10-5） |
+| PUT `/api/events/{id}` | イベントの編集（F10-5） |
 | POST `/api/members/{id}/invite` | 招待コード発行 |
 | GET/POST `/api/events`, GET `/api/events/{id}` | イベント |
 | GET `/api/events/{id}/attendances`, PUT …/{member_id} | 出欠取得/修正 |
