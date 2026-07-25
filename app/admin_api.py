@@ -31,6 +31,7 @@ from .models import (
     EventStatus,
     EventType,
     Member,
+    ReminderPolicy,
     Settings,
     TargetScope,
 )
@@ -234,6 +235,35 @@ def seed_policies():
         repo.upsert_policy(policy)
         seeded.append(policy.policy_id)
     return {"seeded": seeded}
+
+
+@router.get("/policies/{policy_id}")
+def get_policy(policy_id: str):
+    policy = get_repo().get_policy(policy_id)
+    if policy is None:
+        raise HTTPException(status_code=404, detail="policy not found")
+    return policy
+
+
+@router.put("/policies/{policy_id}")
+def put_policy(
+    policy_id: str,
+    payload: ReminderPolicy,
+    x_goog_authenticated_user_email: str | None = Header(default=None),
+):
+    """催促ポリシー（段階・オフセット）を更新する（docs/dashboard-design.md §5）。"""
+    if payload.policy_id != policy_id:
+        raise HTTPException(status_code=400, detail="policy_id mismatch")
+    repo = get_repo()
+    repo.upsert_policy(payload)
+    write_audit(
+        repo,
+        actor=_actor(x_goog_authenticated_user_email),
+        action="policy.update",
+        target=policy_id,
+        detail=f"stages={len(payload.stages)}",
+    )
+    return payload
 
 
 # --------------------------------------------------------------------------- #

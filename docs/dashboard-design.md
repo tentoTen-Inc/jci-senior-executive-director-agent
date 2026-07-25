@@ -249,7 +249,8 @@ web/
 2. **議案データ入力**: **Drive 取込中心**。委員会が Drive に上げた資料をエージェントが取り込み議案カード化（手入力は補助）。
 3. **UIライブラリ**: Vite + React + TypeScript + Tailwind + Recharts、すべてバンドル同梱（外部CDN不使用）。
 4. **コスト記録**: Gemini 呼び出しのトークン記録は Phase2 で追加（`InferenceLog`＝§4.3 として実装済み）。
-5. **既存 `/dashboard`（最小HTML）**: 新SPA移行後に廃止。
+5. **既存 `/dashboard`（最小HTML）**: 新SPA移行後に廃止（廃止済み。`/app/` へ 308 リダイレクトのみ残置）。
+   キルスイッチ等の管理操作は SPA `/app/settings` に移設済み。
 6. **進め方**: Phase1 から issue 化して自律実装。
 
 ### 残課題（ユーザー提供・手動が必要）

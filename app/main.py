@@ -16,7 +16,7 @@ import logging
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from linebot.v3 import WebhookParser
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import (
@@ -36,7 +36,6 @@ from linebot.v3.webhooks import (
 
 from . import config, line_push
 from .admin_api import router as admin_router
-from .dashboard import router as dashboard_router
 from .delivery import execute_delivery
 from .deps import get_repo
 from .invite import verify_and_link
@@ -78,7 +77,15 @@ app.include_router(admin_router, prefix="/admin")  # 後方互換
 app.include_router(admin_router, prefix="/api")  # SPA(管理ダッシュボード)用
 app.include_router(proposals_router, prefix="/admin")
 app.include_router(proposals_router, prefix="/api")
-app.include_router(dashboard_router)
+
+
+@app.get("/dashboard", include_in_schema=False)
+def legacy_dashboard():
+    """旧・最小HTMLダッシュボードは SPA(/app) へ移行済み（design §10 確定5）。
+
+    既存ブックマーク救済のためリダイレクトのみ残す。
+    """
+    return RedirectResponse(url="/app/", status_code=308)
 
 
 def _mount_spa() -> None:
