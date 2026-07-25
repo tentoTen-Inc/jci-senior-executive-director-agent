@@ -319,3 +319,131 @@ def test_not_found_and_auth():
     assert client.post("/api/surveys/nope/sync").status_code == 404
     assert client.post("/api/surveys/nope/digest").status_code == 404
     assert TestClient(main.app).get("/api/surveys").status_code == 401
+
+
+# --------------------------------------------------------------------------- #
+# 会員照合・未提出者・催促（P4-2 / F7-3）
+# --------------------------------------------------------------------------- #
+def seed_members(repo):
+    from app.models import Contact, Member
+
+    # a@example.jp はメール一致、山田花子 は氏名一致（フォーム側は空白なし）
+    repo.upsert_member(Member(
+        member_id="m1", name="田中 太郎", line_user_id="U1",
+        contact=Contact(email="a@example.jp"),
+    ))
+    repo.upsert_member(Member(member_id="m2", name="山田花子", line_user_id="U2"))
+    repo.upsert_member(Member(member_id="m3", name="鈴木一郎", line_user_id="U3"))
+    repo.upsert_member(Member(member_id="m4", name="連携なし"))  # LINE未連携＝配信対象外
+
+
+def test_match_by_email_then_name(repo):
+    seed_members(repo)
+    from app.survey_match import match_responses
+
+    sid = import_form().json()["survey_id"]
+    survey = repo.get_survey(sid)
+    result = match_responses(repo, survey)
+    # r1 はメール一致（氏名は "田中太郎" vs "田中 太郎" で空白違い）、r2 は氏名一致
+    assert result.matched == {"r1": "m1", "r2": "m2"}
+    assert result.unmatched_response_ids == []
+    # 照合結果は取込時に回答へ書き戻される
+    assert {r.response_id: r.member_id for r in survey.responses} == {"r1": "m1", "r2": "m2"}
+
+
+def test_unmatched_response_is_counted_not_guessed(repo, monkeypatch):
+    seed_members(repo)
+    payload = {
+        "form": FORM_PAYLOAD["form"],
+        "responses": [{
+            "responseId": "rx", "createTime": "2026-05-13T00:00:00Z",
+            "respondentEmail": "guest@example.com",
+            "answers": {"q_name": {"textAnswers": {"answers": [{"value": "外部の方"}]}}},
+        }],
+    }
+    monkeypatch.setattr(forms, "fetch_form", lambda form_id: payload)
+    sid = import_form().json()["survey_id"]
+
+    res = client.get(f"/api/surveys/{sid}/pending").json()
+    assert res["unmatched"] == 1
+    assert res["answered"] == 0  # 照合できない回答は回答者数に数えない
+    assert set(res["pending_member_ids"]) == {"m1", "m2", "m3"}  # m4 は未連携で対象外
+
+
+def test_pending_uses_event_scope(repo):
+    from app.models import Event, EventStatus, EventType, TargetScope, TargetScopeKind
+
+    seed_members(repo)
+    repo.upsert_member(repo.get_member("m3").model_copy(update={"committee": "総務委員会"}))
+    repo.upsert_event(Event(
+        event_id="ev1", type=EventType.例会, title="4月例会",
+        datetime_start=datetime(2026, 4, 20, 19, 0),
+        target_scope=TargetScope(kind=TargetScopeKind.committee, value=["総務委員会"]),
+        status=EventStatus.open,
+    ))
+    sid = import_form(event_id="ev1").json()["survey_id"]
+    res = client.get(f"/api/surveys/{sid}/pending").json()
+    assert res["total_targets"] == 1  # 総務委員会の m3 のみ
+    assert res["pending_member_ids"] == ["m3"]
+
+
+def test_pending_rejects_external(repo):
+    import_form(form_id="fx", kind="external")
+    sid = client.get("/api/surveys?kind=external").json()[0]["survey_id"]
+    assert client.get(f"/api/surveys/{sid}/pending").status_code == 400
+    assert client.post(f"/api/surveys/{sid}/remind").status_code == 400
+
+
+def test_remind_pending_only(repo, monkeypatch):
+    from app import line_push
+    from app.models import QuietHours, Settings
+
+    sent: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        line_push, "push_messages",
+        lambda user_id, messages: bool(sent.append((user_id, messages[0].text))) or True,
+    )
+    seed_members(repo)
+    repo.save_settings(Settings(quiet_hours=QuietHours(start="00:00", end="00:00")))
+    sid = import_form().json()["survey_id"]
+
+    res = client.post(f"/api/surveys/{sid}/remind", headers=IAP)
+    assert res.status_code == 200
+    body = res.json()
+    assert (body["pending"], body["sent"], body["reminder_count"]) == (1, 1, 1)
+    assert [u for u, _ in sent] == ["U3"]  # 回答済みの m1/m2 には送らない
+    assert "アンケートのお願い" in sent[0][1]
+    assert repo.get_survey(sid).reminder_count == 1
+    assert any(a.action == "survey.remind" for a in repo.list_audit())
+
+
+def test_remind_body_override_and_no_pending(repo, monkeypatch):
+    from app import line_push
+    from app.models import QuietHours, Settings
+
+    sent: list[str] = []
+    monkeypatch.setattr(
+        line_push, "push_messages",
+        lambda user_id, messages: bool(sent.append(messages[0].text)) or True,
+    )
+    seed_members(repo)
+    repo.save_settings(Settings(quiet_hours=QuietHours(start="00:00", end="00:00")))
+    sid = import_form().json()["survey_id"]
+
+    client.post(f"/api/surveys/{sid}/remind", json={"body_text": "アンケートご協力ください"})
+    assert sent == ["アンケートご協力ください"]
+
+    # 全員回答済みにすると 409
+    survey = repo.get_survey(sid)
+    survey.responses[0].member_id = "m1"
+    survey.responses.append(survey.responses[0].model_copy(update={
+        "response_id": "r3", "member_id": "m3", "respondent_email": None,
+        "respondent_name": "鈴木一郎",
+    }))
+    repo.upsert_survey(survey)
+    assert client.post(f"/api/surveys/{sid}/remind").status_code == 409
+
+
+def test_pending_and_remind_404():
+    assert client.get("/api/surveys/nope/pending").status_code == 404
+    assert client.post("/api/surveys/nope/remind").status_code == 404
