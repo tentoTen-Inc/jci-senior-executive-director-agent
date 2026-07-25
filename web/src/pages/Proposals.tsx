@@ -18,6 +18,30 @@ type Proposal = {
   sed_approval: SedApproval;
 };
 
+type CellState = "done" | "pending" | "unset" | "soon" | "overdue";
+type MatrixCell = {
+  kind: string;
+  total: number;
+  counts: Record<CellState, number>;
+  state: CellState;
+  next_deadline: string | null;
+  samples: string[];
+};
+type Matrix = {
+  kinds: { key: string; label: string }[];
+  rows: { committee: string; total: number; cells: Record<string, MatrixCell> }[];
+  totals: Record<string, Record<CellState, number>>;
+};
+
+// セル=状態色（docs/dashboard-design.md §3.2）
+const CELL_STYLE: Record<CellState, { cls: string; label: string }> = {
+  overdue: { cls: "bg-red-100 text-red-700", label: "遅延" },
+  soon: { cls: "bg-amber-100 text-amber-800", label: "締切間近" },
+  pending: { cls: "bg-white text-slate-600", label: "期限内" },
+  unset: { cls: "bg-slate-100 text-slate-500", label: "締切未設定" },
+  done: { cls: "bg-green-50 text-green-700", label: "完了" },
+};
+
 const STAGES: { key: string; label: string }[] = [
   { key: "entry", label: "エントリー" },
   { key: "submitted", label: "資料提出" },
@@ -36,8 +60,12 @@ export default function Proposals() {
   const [msg, setMsg] = useState<string | null>(null);
   const [form, setForm] = useState({ title: "", committee: "", content: "" });
   const [folderId, setFolderId] = useState("");
+  const [matrix, setMatrix] = useState<Matrix | null>(null);
 
-  const load = () => api<Proposal[]>("/proposals").then(setItems).catch((e) => setMsg(e.message));
+  const load = () => {
+    api<Proposal[]>("/proposals").then(setItems).catch((e) => setMsg(e.message));
+    api<Matrix>("/proposals/matrix").then(setMatrix).catch((e) => setMsg(e.message));
+  };
   useEffect(() => {
     load();
   }, []);
@@ -81,8 +109,6 @@ export default function Proposals() {
       setMsg((e as Error).message);
     }
   }
-
-  const committees = Array.from(new Set(items.map((p) => p.committee || "(未設定)")));
 
   return (
     <div>
@@ -158,18 +184,61 @@ export default function Proposals() {
         </div>
       </Card>
 
-      {committees.length > 0 && (
-        <Card title="委員会別 件数">
-          <table className="text-sm">
-            <tbody>
-              {committees.map((c) => (
-                <tr key={c} className="border-t">
-                  <td className="py-1 pr-4">{c}</td>
-                  <td>{items.filter((p) => (p.committee || "(未設定)") === c).length} 件</td>
+      {matrix && matrix.rows.length > 0 && (
+        <Card title="委員会別 提出マトリクス">
+          <div className="overflow-x-auto">
+            <table className="text-sm w-full min-w-[560px]">
+              <thead>
+                <tr className="text-xs text-slate-500">
+                  <th className="text-left font-medium py-1 pr-3">委員会</th>
+                  <th className="font-medium py-1 px-2">件数</th>
+                  {matrix.kinds.map((k) => (
+                    <th key={k.key} className="font-medium py-1 px-2">
+                      {k.label}
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {matrix.rows.map((row) => (
+                  <tr key={row.committee} className="border-t align-top">
+                    <td className="py-1 pr-3">{row.committee}</td>
+                    <td className="text-center py-1 px-2 text-slate-500">{row.total}</td>
+                    {matrix.kinds.map((k) => {
+                      const cell = row.cells[k.key];
+                      const style = CELL_STYLE[cell.state];
+                      return (
+                        <td key={k.key} className="py-1 px-1">
+                          <div className={`rounded p-1 ${style.cls}`} title={cell.samples.join(" / ")}>
+                            <div className="text-xs font-medium">
+                              {style.label}
+                              {cell.state !== "done" && cell.counts[cell.state] > 1 &&
+                                ` ${cell.counts[cell.state]}件`}
+                            </div>
+                            {cell.next_deadline && (
+                              <div className="text-xs opacity-75">
+                                次〆{new Date(cell.next_deadline).toLocaleDateString("ja-JP", {
+                                  month: "numeric",
+                                  day: "numeric",
+                                })}
+                              </div>
+                            )}
+                            <div className="text-xs opacity-60 truncate">
+                              完了 {cell.counts.done}/{cell.total}
+                            </div>
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-slate-400 mt-2">
+            列=締切区分（エントリー/提出/配信）。セル色は最も深刻な状態（遅延＞締切間近＞締切未設定＞期限内＞完了）。
+            進行中（open）の議案のみ集計。
+          </p>
         </Card>
       )}
 
