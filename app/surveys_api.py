@@ -12,13 +12,16 @@ from pydantic import BaseModel
 
 from . import forms
 from .audit import write_audit
+from .delivery import execute_delivery
 from .deps import get_repo
 from .inference import record_inference
+from .line_push import member_text_sender
 from .llm import digest_survey
 from .llm import model_name as llm_model_name
-from .models import InferenceUsage
+from .models import DeliveryJob, InferenceUsage, Survey
 from .survey_agg import aggregate_survey, free_texts
 from .survey_import import build_survey
+from .survey_match import apply_matches, pending_members
 
 router = APIRouter(tags=["surveys"])
 
@@ -27,6 +30,15 @@ SURVEY_KINDS = ("internal", "external")
 
 def _actor(email: str | None) -> str:
     return email or "unknown"
+
+
+def default_reminder_text(survey: Survey) -> str:
+    """既定の催促文。フォームは現行運用のまま使うため、URLは案内文に含めない。"""
+    return (
+        f"【アンケートのお願い】{survey.title}\n"
+        "まだご回答をいただいていません。お手数ですが、事務局からご案内した"
+        "Googleフォームからご回答をお願いします。"
+    )
 
 
 class SurveyImport(BaseModel):
@@ -71,6 +83,9 @@ def import_form(
         }
 
     repo.upsert_survey(survey)
+    if survey.kind == "internal":
+        # 会員照合の結果を回答に書き戻す（未提出者の算出・画面表示に使う）
+        survey = apply_matches(repo, survey)
     write_audit(
         repo, actor=_actor(x_goog_authenticated_user_email), action="survey.import",
         target=survey.survey_id,
@@ -107,6 +122,87 @@ def sync_survey(
         SurveyImport(form_id=survey.form_id, kind=survey.kind, event_id=survey.event_id),
         x_goog_authenticated_user_email,
     )
+
+
+@router.get("/surveys/{survey_id}/pending")
+def survey_pending(survey_id: str):
+    """未提出者一覧（対内のみ・F7-3）。"""
+    repo = get_repo()
+    survey = repo.get_survey(survey_id)
+    if survey is None:
+        raise HTTPException(status_code=404, detail="survey not found")
+    if survey.kind != "internal":
+        raise HTTPException(
+            status_code=400,
+            detail="対外アンケートは非会員が対象のため未提出者を特定できません。",
+        )
+    return pending_members(repo, survey)
+
+
+class SurveyRemind(BaseModel):
+    body_text: str | None = None  # 催促文の上書き
+
+
+@router.post("/surveys/{survey_id}/remind")
+def remind_survey(
+    survey_id: str,
+    payload: SurveyRemind | None = None,
+    x_goog_authenticated_user_email: str | None = Header(default=None),
+):
+    """未提出者へ回答を催促する（既存ガードレール適用・F7-3）。"""
+    repo = get_repo()
+    survey = repo.get_survey(survey_id)
+    if survey is None:
+        raise HTTPException(status_code=404, detail="survey not found")
+    if survey.kind != "internal":
+        raise HTTPException(
+            status_code=400, detail="対外アンケートは催促対象外です（非会員のため）。"
+        )
+
+    result = pending_members(repo, survey)
+    if not result.pending_member_ids:
+        raise HTTPException(status_code=409, detail="未提出者はいません。")
+
+    actor = _actor(x_goog_authenticated_user_email)
+    now = datetime.now()
+    body = ((payload.body_text if payload else None) or default_reminder_text(survey)).strip()
+    job = DeliveryJob(
+        job_id=f"svy_{survey_id}_{survey.reminder_count + 1}",
+        type="survey_reminder",
+        event_id=survey.event_id,
+        targets=result.pending_member_ids,
+        idempotency_key=f"{survey_id}:{survey.reminder_count + 1}",
+    )
+    repo.save_delivery_job(job)
+    report = execute_delivery(
+        repo, job, body, now=now, sender=member_text_sender(repo, body)
+    )
+    if report.halted:
+        write_audit(
+            repo, actor=actor, action="survey.remind.halted",
+            target=survey_id, detail=", ".join(report.problems),
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=f"ガードレールにより催促を中止しました: {', '.join(report.problems)}",
+        )
+
+    survey.reminder_count += 1
+    survey.reminded_at = now
+    repo.upsert_survey(survey)
+    write_audit(
+        repo, actor=actor, action="survey.remind", target=survey_id,
+        detail=f"pending={len(result.pending_member_ids)} sent={report.sent}",
+    )
+    return {
+        "survey_id": survey_id,
+        "pending": len(result.pending_member_ids),
+        "sent": report.sent,
+        "blocked": report.blocked,
+        "deferred": report.deferred,
+        "failed": report.failed,
+        "reminder_count": survey.reminder_count,
+    }
 
 
 @router.post("/surveys/{survey_id}/digest")

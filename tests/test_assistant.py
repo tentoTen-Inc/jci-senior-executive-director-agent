@@ -9,6 +9,7 @@ from app.member_menu import handle_member_text
 from app.models import (
     Attendance,
     AttendanceStatus,
+    Contact,
     Event,
     EventStatus,
     EventType,
@@ -43,8 +44,9 @@ def repo():
         committee="総務委員会", officer_role="専務理事",
     ))
     r.upsert_member(Member(
-        member_id="m2", name="佐藤次郎", line_user_id="U2",
-        committee="コト創り委員会", phone="090-0000-0000", email="jiro@example.jp",
+        member_id="m2", name="佐藤次郎", line_user_id="U2", committee="コト創り委員会",
+        # 連絡先は Contact に入る（Member 直下に置くと pydantic が黙って捨てるため注意）
+        contact=Contact(mobile="090-0000-0000", email="jiro@example.jp"),
     ))
     r.upsert_event(Event(
         event_id="e1", type=EventType.例会, title="8月例会",

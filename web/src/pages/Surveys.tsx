@@ -26,6 +26,7 @@ type Survey = {
   event_id: string | null;
   questions: Question[];
   responses: { response_id: string }[];
+  reminder_count: number;
   digest: Digest | null;
   synced_at: string | null;
 };
@@ -44,6 +45,13 @@ type Aggregate = {
   responses: number;
   scales: ScaleStat[];
   texts: TextStat[];
+};
+type Pending = {
+  total_targets: number;
+  answered: number;
+  unmatched: number;
+  pending_member_ids: string[];
+  pending: { member_id: string; name: string }[];
 };
 
 const KIND_LABEL: Record<string, string> = { internal: "対内", external: "対外" };
@@ -77,6 +85,7 @@ export default function Surveys() {
   const [items, setItems] = useState<Survey[]>([]);
   const [sel, setSel] = useState<Survey | null>(null);
   const [agg, setAgg] = useState<Aggregate | null>(null);
+  const [pending, setPending] = useState<Pending | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({ form_id: "", kind: "internal", event_id: "" });
@@ -92,6 +101,10 @@ export default function Surveys() {
       const data = await api<{ survey: Survey; aggregate: Aggregate }>(`/surveys/${id}`);
       setSel(data.survey);
       setAgg(data.aggregate);
+      setPending(null);
+      if (data.survey.kind === "internal") {
+        api<Pending>(`/surveys/${id}/pending`).then(setPending).catch(() => setPending(null));
+      }
     } catch (e) {
       setMsg((e as Error).message);
     }
@@ -123,6 +136,24 @@ export default function Surveys() {
         await load();
         await open(s.survey_id);
       }
+    } catch (e) {
+      setMsg((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remind(survey: Survey, count: number) {
+    if (!confirm(`未提出の${count}名にLINEで催促を送ります。よろしいですか？`)) return;
+    setBusy(true);
+    try {
+      const r = await api<{
+        pending: number; sent: number; blocked: number; deferred: number; failed: number;
+      }>(`/surveys/${survey.survey_id}/remind`, { method: "POST", body: JSON.stringify({}) });
+      setMsg(
+        `催促しました: 未提出${r.pending}名 / 送信${r.sent} 保留${r.deferred} ブロック${r.blocked} 失敗${r.failed}`
+      );
+      await open(survey.survey_id);
     } catch (e) {
       setMsg((e as Error).message);
     } finally {
@@ -242,10 +273,39 @@ export default function Surveys() {
             >
               {sel.digest ? "AI要約を再生成" : "自由記述をAIで要約"}
             </button>
+            {pending && pending.pending_member_ids.length > 0 && (
+              <button
+                className="bg-brand text-white rounded px-2 py-1 text-xs"
+                disabled={busy}
+                onClick={() => remind(sel, pending.pending_member_ids.length)}
+              >
+                未提出 {pending.pending_member_ids.length}名に催促
+              </button>
+            )}
             <button className="text-slate-500 underline text-xs" onClick={() => setSel(null)}>
               閉じる
             </button>
           </div>
+
+          {pending && (
+            <div className="text-sm mb-3 p-2 rounded bg-slate-50">
+              回答 {pending.answered}/{pending.total_targets}名
+              {pending.pending.length > 0 && (
+                <span className="text-slate-500">
+                  {" "}／ 未提出: {pending.pending.map((p) => p.name).join("、")}
+                </span>
+              )}
+              {pending.unmatched > 0 && (
+                <p className="text-xs text-amber-700 mt-1">
+                  会員と照合できなかった回答が {pending.unmatched} 件あります
+                  （氏名の表記ゆれ・非会員の回答など）。催促対象からは除いています。
+                </p>
+              )}
+              {sel.reminder_count > 0 && (
+                <p className="text-xs text-slate-400 mt-1">催促 {sel.reminder_count} 回送信済み</p>
+              )}
+            </div>
+          )}
 
           <div className="grid gap-3 md:grid-cols-2 text-sm">
             <div>
