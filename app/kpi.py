@@ -6,6 +6,7 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from .attendance import aggregate
+from .inference import LlmCostSummary, llm_cost_summary
 from .models import DeliveryResult, EventType
 from .repository import Repository
 
@@ -50,6 +51,7 @@ class KpiOverview(BaseModel):
     avg_attendance_rate: float
     avg_answer_rate: float
     reminder_count: int
+    cost: LlmCostSummary  # 当月のLLMコスト（§6 月間コスト）
 
 
 def kpi_overview(repo: Repository, *, now: datetime) -> KpiOverview:
@@ -70,4 +72,5 @@ def kpi_overview(repo: Repository, *, now: datetime) -> KpiOverview:
         avg_attendance_rate=avg_att,
         avg_answer_rate=avg_ans,
         reminder_count=reminders,
+        cost=llm_cost_summary(repo, now=now),
     )

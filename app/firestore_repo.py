@@ -5,6 +5,8 @@ Repository プロトコルを満たす。ライブ接続を伴うため CI で�
 """
 from __future__ import annotations
 
+from datetime import datetime
+
 from .models import (
     Attendance,
     AuditLog,
@@ -13,6 +15,7 @@ from .models import (
     Escalation,
     Event,
     EventStatus,
+    InferenceLog,
     InviteCode,
     LinkState,
     Member,
@@ -35,6 +38,7 @@ COL_LOGS = "deliveryLogs"
 COL_ESCALATIONS = "escalations"
 COL_AUDIT = "auditLogs"
 COL_PROPOSALS = "proposals"
+COL_INFERENCE_LOGS = "inferenceLogs"
 SETTINGS_DOC = "global"
 
 
@@ -195,3 +199,15 @@ class FirestoreRepository:
         if status is not None:
             col = col.where("status", "==", status)
         return [Proposal.model_validate(s.to_dict()) for s in col.stream()]
+
+    # --- inference (LLMコスト) ---
+    def save_inference_log(self, log: InferenceLog) -> None:
+        self._db.collection(COL_INFERENCE_LOGS).document(log.log_id).set(
+            log.model_dump(mode="json")
+        )
+
+    def list_inference_logs(self, *, since: datetime | None = None) -> list[InferenceLog]:
+        col = self._db.collection(COL_INFERENCE_LOGS)
+        if since is not None:
+            col = col.where("at", ">=", since.isoformat())
+        return [InferenceLog.model_validate(s.to_dict()) for s in col.stream()]

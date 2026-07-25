@@ -11,8 +11,11 @@ from .audit import write_audit
 from .deps import get_repo
 from .drive_import import import_drive_folder
 from .format_check import run_format_check
+from .inference import record_inference
+from .llm import model_name as llm_model_name
 from .llm import review_proposal
 from .models import (
+    InferenceUsage,
     Proposal,
     ProposalDeadlines,
     ProposalHistory,
@@ -163,13 +166,25 @@ def llm_review(
     p = repo.get_proposal(proposal_id)
     if p is None:
         raise HTTPException(status_code=404, detail="proposal not found")
-    review = review_proposal(p.content or "")
-    if review is None:
+    now = datetime.now()
+    outcome = review_proposal(p.content or "")
+    if outcome is None:
+        if (p.content or "").strip():
+            # 本文はあるがLLM呼び出しが失敗 → コスト/失敗率の可視化のため記録する。
+            record_inference(
+                repo, kind="proposal_review", usage=InferenceUsage(model=llm_model_name()),
+                now=now, target=proposal_id, ok=False, error="generation_failed",
+            )
         raise HTTPException(
             status_code=503,
             detail="LLMレビューを生成できませんでした（本文が空、またはLLM未設定/失敗）。",
         )
-    review.reviewed_at = datetime.now()
+    review = outcome.review
+    record_inference(
+        repo, kind="proposal_review", usage=outcome.usage,
+        now=now, target=proposal_id,
+    )
+    review.reviewed_at = now
     p.llm_review = review
     repo.upsert_proposal(p)
     write_audit(

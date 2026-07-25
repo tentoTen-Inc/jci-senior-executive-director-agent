@@ -2,7 +2,8 @@
 
 - 本番は Vertex AI の Gemini を呼ぶ。
 - 認証/ライブラリ未設定や呼び出し失敗時は graceful degrade（reviewed=False を返す）。
-- テストでは `generate_review_json` をモックする。
+- テストでは `generate_review` をモックする。
+- 消費トークンは応答の usage_metadata から取得し、コスト記録に使う（§6 月間コスト）。
 
 レビューは「助言」であり最終判断は人間（専務理事）が行う（F6-8）。
 """
@@ -11,8 +12,10 @@ from __future__ import annotations
 import json
 import logging
 
+from pydantic import BaseModel
+
 from . import config
-from .models import LlmReview
+from .models import InferenceUsage, LlmReview
 
 logger = logging.getLogger("jci-agent.llm")
 
@@ -33,14 +36,29 @@ _PROMPT = """あなたは青年会議所(JC)の専務理事を補佐するアシ
 """
 
 
-def _model_name() -> str:
+class Generation(BaseModel):
+    """LLM応答の生テキストと消費トークン。"""
+
+    text: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+
+class ReviewOutcome(BaseModel):
+    """レビュー結果とコスト記録用の使用量。"""
+
+    review: LlmReview
+    usage: InferenceUsage
+
+
+def model_name() -> str:
     import os
 
     return os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)
 
 
-def generate_review_json(content: str, *, model: str, project: str, location: str) -> str:
-    """Vertex AI Gemini を呼んで JSON 文字列を返す（テストでモックする境界）。"""
+def generate_review(content: str, *, model: str, project: str, location: str) -> Generation:
+    """Vertex AI Gemini を呼んで応答と使用トークンを返す（テストでモックする境界）。"""
     import vertexai
     from vertexai.generative_models import GenerativeModel
 
@@ -50,22 +68,27 @@ def generate_review_json(content: str, *, model: str, project: str, location: st
         _PROMPT.format(content=content),
         generation_config={"response_mime_type": "application/json"},
     )
-    return resp.text
+    usage = getattr(resp, "usage_metadata", None)
+    return Generation(
+        text=resp.text,
+        input_tokens=getattr(usage, "prompt_token_count", 0) or 0,
+        output_tokens=getattr(usage, "candidates_token_count", 0) or 0,
+    )
 
 
-def review_proposal(content: str) -> LlmReview | None:
-    """議案本文をレビューして LlmReview を返す。失敗時は None。"""
+def review_proposal(content: str) -> ReviewOutcome | None:
+    """議案本文をレビューして結果と使用トークンを返す。失敗時は None。"""
     if not content or not content.strip():
         return None
     import os
 
-    model = _model_name()
+    model = model_name()
     project = config.PROJECT_ID
     location = os.environ.get("VERTEX_AI_LOCATION", "asia-northeast1")
     try:
-        raw = generate_review_json(content, model=model, project=project, location=location)
-        data = json.loads(raw)
-        return LlmReview(
+        gen = generate_review(content, model=model, project=project, location=location)
+        data = json.loads(gen.text)
+        review = LlmReview(
             summary=str(data.get("summary", "")).strip(),
             points=[str(x) for x in data.get("points", [])][:5],
             concerns=[str(x) for x in data.get("concerns", [])][:5],
@@ -74,3 +97,11 @@ def review_proposal(content: str) -> LlmReview | None:
     except Exception:  # noqa: BLE001 - LLM未設定/失敗でも本処理は止めない
         logger.exception("LLMレビューに失敗しました")
         return None
+    return ReviewOutcome(
+        review=review,
+        usage=InferenceUsage(
+            model=model,
+            input_tokens=gen.input_tokens,
+            output_tokens=gen.output_tokens,
+        ),
+    )
