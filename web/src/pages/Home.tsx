@@ -21,6 +21,7 @@ type HomeData = {
     unlinked_members: number;
     open_escalations: number;
     unanswered_total: number;
+    open_notice_actions: number;
   };
   upcoming_events: EventBrief[];
   this_week: EventBrief[];
@@ -71,6 +72,7 @@ export default function Home() {
           <li>未対応の事務局連絡: <b>{a.open_escalations}</b> 件</li>
           <li>LINE未連携の会員: <b>{a.unlinked_members}</b> 名</li>
           <li>出欠未回答(対象延べ): <b>{a.unanswered_total}</b> 名</li>
+          <li>対外連絡の未完了タスク: <b>{a.open_notice_actions}</b> 件</li>
         </ul>
       </Card>
 

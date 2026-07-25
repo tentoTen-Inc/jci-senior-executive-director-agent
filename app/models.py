@@ -323,6 +323,28 @@ class ExternalNotice(BaseModel):
     history: list[NoticeHistory] = Field(default_factory=list)
 
 
+class NoticeAction(BaseModel):
+    """対外連絡から起票した「対象者がやること」（F5-3/F5-5）。
+
+    対応状況は会員単位で追跡する（`done_by`）。未対応者だけに催促を送る。
+    """
+
+    action_id: str
+    notice_id: str
+    title: str
+    due: datetime | None = None
+    assignees: list[str] = Field(default_factory=list)  # member_id
+    done_by: list[str] = Field(default_factory=list)  # 対応済みの member_id
+    created_at: datetime
+    status: str = "open"  # open | closed
+    reminder_count: int = 0
+    reminded_at: datetime | None = None
+
+    @property
+    def pending(self) -> list[str]:
+        return [m for m in self.assignees if m not in self.done_by]
+
+
 class InferenceUsage(BaseModel):
     """LLM 1回の呼び出しで消費したトークン（プロバイダ応答から取得）。"""
 

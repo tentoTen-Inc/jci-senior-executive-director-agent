@@ -41,6 +41,7 @@ from .deps import get_repo
 from .invite import verify_and_link
 from .line_messages import apply_postback, build_attendance_request
 from .member_menu import handle_member_text
+from .notice_actions import ACTION_NOTICE_DONE, handle_done_postback
 from .notices_api import router as notices_router
 from .proposals_api import router as proposals_router
 from .reminders import plan_reminders
@@ -219,19 +220,9 @@ def handle_postback(user_id: str, data: str) -> list[Message]:
         return [TextMessage(text="先に招待コードで登録をお願いします。")]
     if data.startswith("menu|"):
         return handle_member_text(repo, member, data, now=datetime.now())
+    if data.startswith(f"{ACTION_NOTICE_DONE}|"):
+        return handle_done_postback(repo, member.member_id, data)
     return apply_postback(repo, member, data, now=datetime.now())
-
-
-def _push_sender(repo, messages: list[Message]):
-    """member_id を LINE userId に解決して Push する sender を作る。"""
-
-    def sender(member_id: str) -> bool:
-        member = repo.get_member(member_id)
-        if member is None or not member.line_user_id:
-            return False
-        return line_push.push_messages(member.line_user_id, messages)
-
-    return sender
 
 
 @app.post("/tasks/tick")
@@ -250,7 +241,8 @@ def tasks_tick():
             continue
         message = build_attendance_request(event)
         report = execute_delivery(
-            repo, job, message.text, now=now, sender=_push_sender(repo, [message])
+            repo, job, message.text, now=now,
+            sender=line_push.member_messages_sender(repo, [message]),
         )
         results.append(
             {
