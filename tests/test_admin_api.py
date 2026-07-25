@@ -132,6 +132,34 @@ def test_seed_and_list_policies():
     assert "rp_例会_default" in ids and "rp_理事会_default" in ids
 
 
+def test_get_and_update_policy(repo):
+    client.post("/admin/policies/seed")
+    got = client.get("/admin/policies/rp_例会_default")
+    assert got.status_code == 200
+    policy = got.json()
+
+    policy["stages"][0]["offset_minutes"] = -4320  # 3日前へ変更
+    res = client.put(
+        "/admin/policies/rp_例会_default",
+        json=policy,
+        headers={"X-Goog-Authenticated-User-Email": "sed@10to10.co.jp"},
+    )
+    assert res.status_code == 200
+    assert repo.get_policy("rp_例会_default").stages[0].offset_minutes == -4320
+    assert any(a.action == "policy.update" for a in repo.list_audit())
+
+
+def test_update_policy_id_mismatch():
+    client.post("/admin/policies/seed")
+    policy = client.get("/admin/policies/rp_例会_default").json()
+    res = client.put("/admin/policies/rp_理事会_default", json=policy)
+    assert res.status_code == 400
+
+
+def test_policy_not_found():
+    assert client.get("/admin/policies/nope").status_code == 404
+
+
 def test_event_not_found():
     assert client.get("/admin/events/nope").status_code == 404
 

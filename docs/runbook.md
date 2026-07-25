@@ -16,9 +16,11 @@
 | 定期実行 | Cloud Scheduler `jci-tick`（毎時8–21時JST）→ `POST /tasks/tick` |
 | シークレット | Secret Manager: `line-channel-secret` / `line-channel-access-token` / `admin-api-secret` |
 | LINE | 公式アカウント（Channel ID 2010454434）。Webhook 登録済み |
-| 管理 | `/dashboard`（公開HTML）＋ `/admin/*`（`X-Admin-Token` 必須） |
+| 管理 | SPA `/app`（IAP・管理サービス `jci-sed-admin`）＋ `/api/*`・`/admin/*`（IAP または `X-Admin-Token`） |
 
-公開: `/`, `/health`, `/dashboard`, `/line/webhook`（署名検証）。保護: `/admin/*`, `/tasks/*`。
+公開: `/`, `/health`, `/line/webhook`（署名検証）。保護: `/admin/*`, `/api/*`, `/tasks/*`。
+
+> 旧・最小HTML `/dashboard` は廃止し、`/app/` へ 308 リダイレクトのみ残置。
 
 ---
 
@@ -89,7 +91,7 @@ curl <URL>/admin/settings -H "X-Admin-Token: <secret>"
 curl -X PUT <URL>/admin/settings -H "X-Admin-Token: <secret>" -H "Content-Type: application/json" \
   -d '{"kill_switch":true,"quiet_hours":{"start":"21:00","end":"08:00","tz":"Asia/Tokyo"},"rate_limit":{"per_member_per_day":3,"global_per_min":30}}'
 ```
-ダッシュボード `/dashboard` の「キルスイッチ 切替」でも可。
+管理SPA `/app/settings` の「キルスイッチ」でも可。
 
 > ON の間、tick もクローズ通知も送信されない（ブロックされた対象は OFF 後の次 tick で再送される）。
 
