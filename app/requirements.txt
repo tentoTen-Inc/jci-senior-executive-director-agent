@@ -4,3 +4,4 @@ line-bot-sdk==3.14.2
 google-cloud-firestore==2.19.0
 google-cloud-secret-manager==2.21.1
 google-cloud-aiplatform==1.71.1
+pypdf==6.14.2
