@@ -166,6 +166,10 @@ Gemini 呼び出しは既存 `InferenceLog`（`docs/dashboard-design.md` §4.3�
 1. ~~専用Gmailアドレスの確定~~ → **確定: `inawashiro.jc@gmail.com`（個人Gmail）**。
 2. **OAuth クライアントの作成と初回同意**（`scripts/gmail_oauth_setup.py`）。Gmail API の有効化
    （`gcloud services enable gmail.googleapis.com`）と Secret Manager への登録が必要。
+   - 認可は **loopback**（`http://localhost:8765/`）。Google は OOB 方式を 2022 年に廃止済み。
+     ウェブ アプリケーション型のクライアントを使う場合はこのURIを登録する。
+   - **同意画面の公開ステータスが「テスト」だと refresh token は7日で失効する**。
+     継続運用するなら「本番」に切り替える（専用Gmail 1アカウントのみなので審査は不要）。
 3. **転送ルールの設定**（LOM受信箱 → 専用アドレス）。Gmail のフィルタ設定は手動作業。
 4. **取込対象ラベル**（既定 `対外連絡`。環境変数 `GMAIL_LABEL` で変更可）。
    転送時に自動でラベルを付けるフィルタを併せて作成する。

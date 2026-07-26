@@ -55,11 +55,18 @@ curl -X POST <URL>/admin/policies/seed -H "X-Admin-Token: <secret>"
 ```bash
 # 1. Gmail API 有効化（初回のみ）
 gcloud services enable gmail.googleapis.com --project jci-sed-agent
-# 2. GCPコンソールで OAuth クライアント（デスクトップ アプリ）を作成
+# 2. GCPコンソールで OAuth クライアントを作成しJSONをダウンロード
+#    「デスクトップ アプリ」= 追加入力なし
+#    「ウェブ アプリケーション」= 承認済みリダイレクトURIに http://localhost:8765/ を登録
+#      （JavaScript生成元は空欄でよい）
+#    ※ 同意画面の公開ステータスが「テスト」のままだと refresh token が7日で失効する。
+#      継続運用するなら「本番」に切り替える（対象1アカウントなので審査は不要）。
 # 3. 専用Gmail(inawashiro.jc@gmail.com)で一度だけ同意して refresh token を取得
-python scripts/gmail_oauth_setup.py --client-id <ID> --client-secret <SECRET>
-# 4. 出力されたコマンドで Secret Manager に3件登録し、Cloud Run に反映
-#    （gmail-oauth-client-id / -client-secret / -refresh-token）
+#    ブラウザが開くので許可する。--write-secrets で Secret Manager まで登録する。
+python scripts/gmail_oauth_setup.py \
+  --client-secret-file client_secret_....json --write-secrets
+# 4. 実行SA(app-runtime@)はプロジェクトレベルで secretmanager.secretAccessor を
+#    持つため、Cloud Run の再設定は不要
 # 5. Gmail側で「LOM受信箱 → 専用アドレスへ転送」＋「対外連絡」ラベル付けのフィルタを作成
 # 6. 動作確認（dry-run は保存しない）
 curl -X POST <URL>/admin/notices/import-gmail -H "X-Admin-Token: <secret>" \
