@@ -43,15 +43,18 @@
   Pub-Sub push（`users.watch`）は将来の低遅延化オプション。**まずポーリングで十分**（対外連絡は日次〜週次）。
 - **(B) 補助経路 = 管理画面から本文貼り付け／テキスト投入**。Gmail 設定が未了でも運用を開始できる。
 
-### 認証方式（要確認事項）
-専用アドレスの種類で方式が変わる。**どちらにするかは運用判断（§7）**。
+### 認証方式（確定: 個人Gmail / 2026-07-26）
+専用アドレスは **`inawashiro.jc@gmail.com`（個人Gmail）** で確定。
+ドメイン全体委任は使えないため、**OAuth 2.0 の refresh token を Secret Manager に保管**する。
 
-| 専用アドレス | 方式 | 備考 |
-|---|---|---|
-| Workspace（例 `notice@10to10.co.jp`） | SA のドメイン全体委任（DWD）＋ `signJwt` で鍵レス impersonation | Drive取込（`app/drive.py`）と同じ思想。管理者操作が必要 |
-| 個人Gmail（例 `inawashiro.jc@gmail.com`） | OAuth 2.0 の refresh token を Secret Manager に保管（`gmail.readonly`） | DWD 不可。初回のみ本人の同意フローが必要 |
+| シークレット | 内容 |
+|---|---|
+| `gmail-oauth-client-id` / `gmail-oauth-client-secret` | GCPで作成した OAuth クライアント（デスクトップ アプリ） |
+| `gmail-oauth-refresh-token` | 専用Gmailで一度だけ同意して得た refresh token |
 
-いずれも**読み取り専用スコープ**。送信・削除はしない。
+- スコープは `gmail.readonly` のみ（**送信・削除はしない**）。
+- 3つが揃っていない場合、取込APIは 503 を返し、tick は取込をスキップする（催促処理は止めない）。
+- 初回取得は `scripts/gmail_oauth_setup.py`（同意URL表示 → 認可コード投入 → 登録コマンド出力）。
 
 ---
 
@@ -152,7 +155,7 @@ Gemini 呼び出しは既存 `InferenceLog`（`docs/dashboard-design.md` §4.3�
 | フェーズ | 内容 | 依存 |
 |---|---|---|
 | **P3-1**（実装済み） | `ExternalNotice` モデル＋手動投入/一覧/詳細API＋Gemini要約・告知文生成（コスト記録込み）＋SPA「対外連絡」画面 | なし（Gmail設定不要で運用開始できる） |
-| **P3-2** | Gmail取込（認証・ラベル差分ポーリング・添付PDFのテキスト抽出・冪等）＋tick結線 | 専用アドレスと認証方式の確定（§7） |
+| **P3-2**（実装済み） | Gmail取込（OAuth・ラベル差分ポーリング・添付PDFのテキスト抽出・冪等）＋tick結線 | — |
 | **P3-3**（実装済み） | 対象解決（全員/委員会/役職/任意）＋配信実行（既存ガードレール流用）＋配信履歴 | P3-1 |
 | **P3-4**（実装済み） | アクションのタスク化・対応状況追跡・未対応者への催促 | P3-3 |
 
@@ -160,10 +163,12 @@ Gemini 呼び出しは既存 `InferenceLog`（`docs/dashboard-design.md` §4.3�
 
 ## 7. 残課題（ユーザー提供・手動が必要）
 
-1. **専用Gmailアドレスの確定**（Workspace か 個人Gmail か）。§2 の認証方式が変わる。
-2. **転送ルールの設定**（LOM受信箱 → 専用アドレス）。Gmail のフィルタ設定は手動作業。
-3. **取込対象ラベル名**（例 `対外連絡`）。転送時に自動ラベル付けするフィルタを併せて作成。
-4. 個人Gmail採用時は**初回OAuth同意**（refresh token を Secret Manager `gmail-oauth-refresh-token` に登録）。
+1. ~~専用Gmailアドレスの確定~~ → **確定: `inawashiro.jc@gmail.com`（個人Gmail）**。
+2. **OAuth クライアントの作成と初回同意**（`scripts/gmail_oauth_setup.py`）。Gmail API の有効化
+   （`gcloud services enable gmail.googleapis.com`）と Secret Manager への登録が必要。
+3. **転送ルールの設定**（LOM受信箱 → 専用アドレス）。Gmail のフィルタ設定は手動作業。
+4. **取込対象ラベル**（既定 `対外連絡`。環境変数 `GMAIL_LABEL` で変更可）。
+   転送時に自動でラベルを付けるフィルタを併せて作成する。
 
 ---
 

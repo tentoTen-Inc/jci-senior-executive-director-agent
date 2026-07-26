@@ -125,6 +125,24 @@ export default function Notices() {
     }
   }
 
+  async function importGmail(dryRun: boolean) {
+    setBusy(true);
+    try {
+      const r = await api<{ total: number; created: number; updated: number; dry_run: boolean }>(
+        "/notices/import-gmail",
+        { method: "POST", body: JSON.stringify({ dry_run: dryRun }) }
+      );
+      setMsg(
+        `${r.dry_run ? "[確認]" : "[取込]"} 対象${r.total}件 / 新規${r.created} 更新${r.updated}`
+      );
+      if (!dryRun) load(tab);
+    } catch (e) {
+      setMsg((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function act(id: string, path: string) {
     setBusy(true);
     try {
@@ -210,7 +228,30 @@ export default function Notices() {
       <h1 className="text-lg font-semibold text-navy mb-3">対外連絡</h1>
       {msg && <div className="mb-2 text-sm text-brand">{msg}</div>}
 
-      <Card title="メールを取込（本文を貼り付け）">
+      <Card title="Gmailから取込（自動）">
+        <div className="flex flex-wrap gap-2 items-center text-sm">
+          <button
+            className="bg-slate-200 text-navy rounded px-3 py-1"
+            disabled={busy}
+            onClick={() => importGmail(true)}
+          >
+            取込確認(dry-run)
+          </button>
+          <button
+            className="bg-brand text-white rounded px-3 py-1"
+            disabled={busy}
+            onClick={() => importGmail(false)}
+          >
+            今すぐ取込
+          </button>
+          <span className="text-xs text-slate-400">
+            専用Gmail（inawashiro.jc@gmail.com）の「対外連絡」ラベル付きメールを取り込みます。
+            毎時の自動実行にも組み込まれています。
+          </span>
+        </div>
+      </Card>
+
+      <Card title="メールを取込（本文を貼り付け／補助）">
         <div className="flex flex-wrap gap-2 text-sm">
           <input
             className="border rounded p-1 flex-1 min-w-[220px]"

@@ -51,6 +51,22 @@
 curl -X POST <URL>/admin/policies/seed -H "X-Admin-Token: <secret>"
 ```
 
+### 対外連絡のGmail取込（初回セットアップ）
+```bash
+# 1. Gmail API 有効化（初回のみ）
+gcloud services enable gmail.googleapis.com --project jci-sed-agent
+# 2. GCPコンソールで OAuth クライアント（デスクトップ アプリ）を作成
+# 3. 専用Gmail(inawashiro.jc@gmail.com)で一度だけ同意して refresh token を取得
+python scripts/gmail_oauth_setup.py --client-id <ID> --client-secret <SECRET>
+# 4. 出力されたコマンドで Secret Manager に3件登録し、Cloud Run に反映
+#    （gmail-oauth-client-id / -client-secret / -refresh-token）
+# 5. Gmail側で「LOM受信箱 → 専用アドレスへ転送」＋「対外連絡」ラベル付けのフィルタを作成
+# 6. 動作確認（dry-run は保存しない）
+curl -X POST <URL>/admin/notices/import-gmail -H "X-Admin-Token: <secret>" \
+  -H "Content-Type: application/json" -d '{"dry_run":true}'
+```
+> 取込は毎時の `POST /tasks/tick` に相乗り。未設定なら取込はスキップされ、催促処理は通常どおり動く。
+
 ### 名簿投入（実PII・要注意）
 ```bash
 # プレビュー（投入しない）

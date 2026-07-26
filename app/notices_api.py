@@ -1,7 +1,7 @@
 """対外連絡API（docs/external-notice-design.md §4, F5）。
 
 原文（body_text/添付）は不変。Gemini 生成物は digest に分けて保持する（F5-6）。
-配信（P3-3）・Gmail取込（P3-2）は後続フェーズで追加する。
+取込は Gmail（主経路）と管理画面からの手動投入（補助）の2経路。
 """
 from __future__ import annotations
 
@@ -12,10 +12,12 @@ from datetime import datetime
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
+from . import gmail
 from .audit import write_audit
 from .delivery import execute_delivery
 from .deps import get_repo
 from .events import resolve_scope
+from .gmail_import import import_gmail_notices
 from .inference import record_inference
 from .line_push import member_messages_sender, member_text_sender
 from .llm import digest_notice
@@ -92,6 +94,51 @@ def create_notice(
         target=notice.notice_id, detail=notice.subject,
     )
     return notice
+
+
+class GmailImport(BaseModel):
+    label_name: str | None = None  # 既定は GMAIL_LABEL（未設定なら「対外連絡」）
+    newer_than: str | None = None  # 例 "2d"（既定）
+    dry_run: bool = False
+
+
+@router.post("/notices/import-gmail")
+def import_gmail(
+    payload: GmailImport | None = None,
+    x_goog_authenticated_user_email: str | None = Header(default=None),
+):
+    """専用Gmailアドレスの新着（指定ラベル）を取込む（F5-1）。
+
+    ※ `/notices/{notice_id}` より前に定義すること（先着ルーティング）。
+    """
+    repo = get_repo()
+    actor = _actor(x_goog_authenticated_user_email)
+    options = payload or GmailImport()
+    if not gmail.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "GmailのOAuth設定（client_id/client_secret/refresh_token）が未登録です。"
+                "scripts/gmail_oauth_setup.py で取得し Secret Manager に登録してください。"
+            ),
+        )
+    try:
+        summary = import_gmail_notices(
+            repo, now=datetime.now(),
+            label_name=options.label_name,
+            newer_than=options.newer_than,
+            dry_run=options.dry_run,
+            actor=actor,
+        )
+    except Exception as exc:  # noqa: BLE001 - 認証/接続失敗は502で返す
+        raise HTTPException(status_code=502, detail=f"Gmail取込に失敗: {exc}") from exc
+
+    if not options.dry_run and (summary.created or summary.updated):
+        write_audit(
+            repo, actor=actor, action="notice.import_gmail",
+            detail=f"created={summary.created} updated={summary.updated}",
+        )
+    return summary
 
 
 @router.get("/notices/{notice_id}")

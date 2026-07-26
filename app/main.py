@@ -34,10 +34,11 @@ from linebot.v3.webhooks import (
     TextMessageContent,
 )
 
-from . import config, line_push
+from . import config, gmail, line_push
 from .admin_api import router as admin_router
 from .delivery import execute_delivery
 from .deps import get_repo
+from .gmail_import import import_gmail_notices
 from .invite import verify_and_link
 from .line_messages import apply_postback, build_attendance_request
 from .member_menu import handle_member_text
@@ -228,6 +229,18 @@ def handle_postback(user_id: str, data: str) -> list[Message]:
     return apply_postback(repo, member, data, now=datetime.now())
 
 
+def _tick_gmail_import(repo, now: datetime) -> dict | None:
+    """対外連絡のGmail取込（F5-1）。未設定・失敗でも tick 本体は止めない。"""
+    if not gmail.is_configured():
+        return None
+    try:
+        summary = import_gmail_notices(repo, now=now)
+    except Exception:  # noqa: BLE001 - 催促処理を巻き込まない
+        logger.exception("Gmail取込に失敗しました")
+        return {"error": "gmail_import_failed"}
+    return {"total": summary.total, "created": summary.created, "updated": summary.updated}
+
+
 @app.post("/tasks/tick")
 def tasks_tick():
     """Cloud Scheduler から定期起動。締切到来ステージの催促を発火する。
@@ -236,6 +249,7 @@ def tasks_tick():
     """
     repo = get_repo()
     now = datetime.now()
+    gmail_result = _tick_gmail_import(repo, now)
     jobs = plan_reminders(repo, now)
     results = []
     for job in jobs:
@@ -258,7 +272,7 @@ def tasks_tick():
                 "halted": report.halted,
             }
         )
-    return {"planned": len(jobs), "results": results}
+    return {"planned": len(jobs), "results": results, "gmail": gmail_result}
 
 
 @app.post("/line/webhook")
