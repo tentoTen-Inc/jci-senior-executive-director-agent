@@ -41,7 +41,7 @@ from .deps import get_repo
 from .gmail_import import import_gmail_notices
 from .invite import verify_and_link
 from .line_messages import apply_postback, build_attendance_request
-from .member_menu import handle_member_text
+from .member_menu import build_menu, handle_member_text
 from .notice_actions import ACTION_NOTICE_DONE, handle_done_postback
 from .notices_api import router as notices_router
 from .proposals_api import router as proposals_router
@@ -121,6 +121,13 @@ WELCOME_TEXT = (
     "登録のため、事務局から配布された招待コードを入力してください。"
 )
 
+# グループ/複数人トークで未連携ユーザーからメンションされた場合の案内。
+# 招待コードの照合は個別トークのみで行う（グループでコードを流させない）。
+GROUP_UNLINKED_TEXT = (
+    "グループでは登録手続きができません。\n"
+    "「猪苗代専務AI」との個別トークで、事務局から配布された招待コードを入力してください。"
+)
+
 
 def get_parser() -> WebhookParser | None:
     """channel secret から Webhook パーサを構築（未設定なら None）。"""
@@ -196,6 +203,52 @@ def handle_text_message(user_id: str, text: str) -> list[Message]:
     return handle_member_text(repo, member, text, now=datetime.now())
 
 
+GROUP_SOURCE_TYPES = ("group", "room")
+
+
+def _is_group_source(event) -> bool:
+    """グループ/複数人トーク由来のイベントかどうか。"""
+    return getattr(event.source, "type", "user") in GROUP_SOURCE_TYPES
+
+
+def _self_mentionees(message) -> list:
+    """メッセージ内の「ボット自身へのメンション」一覧。"""
+    mention = getattr(message, "mention", None)
+    if mention is None:
+        return []
+    return [m for m in (mention.mentionees or []) if getattr(m, "is_self", False)]
+
+
+def _strip_self_mentions(message) -> str:
+    """本文からボット宛メンション（@猪苗代専務AI）を取り除く。"""
+    text = message.text
+    spans = []
+    for m in _self_mentionees(message):
+        index = getattr(m, "index", None)
+        length = getattr(m, "length", None)
+        if index is None or length is None:
+            continue
+        if 0 <= index <= len(text) and 0 < length <= len(text) - index:
+            spans.append((index, index + length))
+    for start, end in sorted(spans, reverse=True):
+        text = text[:start] + text[end:]
+    return text.strip()
+
+
+def handle_group_text_message(user_id: str | None, text: str) -> list[Message]:
+    """グループ/複数人トークでメンションされたときの応答メッセージ列を生成。
+
+    未連携ユーザーには招待コード照合を行わず、個別トークへ誘導する。
+    """
+    repo = get_repo()
+    member = repo.get_member_by_line_user_id(user_id) if user_id else None
+    if member is None:
+        return [TextMessage(text=GROUP_UNLINKED_TEXT)]
+    if not text:
+        return [build_menu()]
+    return handle_member_text(repo, member, text, now=datetime.now())
+
+
 def handle_event(event) -> None:
     """単一の LINE イベントを処理する。"""
     if isinstance(event, FollowEvent):
@@ -204,6 +257,15 @@ def handle_event(event) -> None:
     elif isinstance(event, MessageEvent) and isinstance(event.message, TextMessageContent):
         user_id = event.source.user_id
         text = event.message.text
+        if _is_group_source(event):
+            # グループではボット宛メンションがある場合のみ応答する（勝手に発言しない）
+            if not _self_mentionees(event.message):
+                logger.info("group message ignored (no mention): userId=%s", user_id)
+                return
+            body = _strip_self_mentions(event.message)
+            logger.info("group message event: userId=%s text=%s", user_id, body)
+            reply_messages(event.reply_token, handle_group_text_message(user_id, body))
+            return
         logger.info("message event: userId=%s text=%s", user_id, text)
         reply_messages(event.reply_token, handle_text_message(user_id, text))
     elif isinstance(event, PostbackEvent):
