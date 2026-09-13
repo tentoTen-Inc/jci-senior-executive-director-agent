@@ -58,9 +58,31 @@ python3 -m venv .venv
 .venv/bin/python scripts/import_roster.py path/to/会員名簿.xlsx --sheet 2026会員名簿 --upsert
 ```
 
+## デプロイ（CI/CD）
+
+`main` にマージすると、CI（ruff / pytest / web build）成功後に
+[.github/workflows/deploy.yml](.github/workflows/deploy.yml) が本番へ自動デプロイする。
+
+- イメージを1回だけビルドし、`jci-sed-agent`（公開・LINE Webhook/tick）と
+  `jci-sed-admin`（管理SPA `/app`・`/api`、IAP保護）の両方に同じイメージを配る。
+- 認証は Workload Identity 連携（鍵レス）。SAのJSON鍵は作らない。
+- デプロイ後に `/health` で疎通確認し、リビジョン名をジョブサマリに出す。
+- 手動実行は Actions → Deploy → Run workflow。
+
+初回のみ GCP 側のセットアップが必要（1回だけ）:
+
+```bash
+./scripts/setup_github_deploy.sh
+```
+
+これで `github-deployer` SA・Workload Identity プール/プロバイダを作成し、
+GitHub Secrets（`GCP_WIF_PROVIDER` / `GCP_DEPLOY_SA`）を登録する。
+
 ## デプロイ（手動・概要）
 
-> 本リポジトリでは自動デプロイは行わない。以下は手順の概要。
+> CI/CD が動いていれば通常は不要。緊急時・CI障害時の手段。
+> `./scripts/deploy.sh` は `jci-sed-agent` のみ。SPA(`/app`)の変更を反映するには
+> `gcloud run deploy jci-sed-admin --source . --region asia-northeast1 --project jci-sed-agent` も必要。
 
 1. コンテナビルド & Cloud Run デプロイ
    ```bash

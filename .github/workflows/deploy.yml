@@ -1,0 +1,113 @@
+name: Deploy
+
+# main への push（PRのマージ）で本番 Cloud Run に自動デプロイする。
+# CI（ruff/pytest/web build）の成功が前提。失敗時はデプロイしない。
+# 手動実行も可（Actions → Deploy → Run workflow）。
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: jci-sed-agent
+  REGION: asia-northeast1
+  RUNTIME_SA: app-runtime@jci-sed-agent.iam.gserviceaccount.com
+  IMAGE_REPO: asia-northeast1-docker.pkg.dev/jci-sed-agent/cloud-run-source-deploy/jci-sed-app
+
+jobs:
+  deploy:
+    name: Cloud Run (production)
+    runs-on: ubuntu-latest
+    # workflow_run は CI が失敗しても発火するため、成功時のみ進める
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write # Workload Identity 連携（鍵レス認証）に必要
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # workflow_run では CI が動いたコミットを明示的に取得する
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Resolve commit sha
+        id: sha
+        run: echo "sha=${{ github.event.workflow_run.head_sha || github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - uses: docker/setup-buildx-action@v3
+
+      # agent / admin は同一イメージ。1回だけビルドして両サービスに配る。
+      - name: Build & push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_REPO }}:${{ steps.sha.outputs.sha }}
+            ${{ env.IMAGE_REPO }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+
+      # 公開サービス（LINE Webhook / tick）。設定は scripts/deploy.sh と同一。
+      - name: Deploy jci-sed-agent
+        run: |
+          gcloud run deploy jci-sed-agent \
+            --image "${IMAGE_REPO}:${{ steps.sha.outputs.sha }}" \
+            --region "${REGION}" \
+            --project "${PROJECT_ID}" \
+            --service-account "${RUNTIME_SA}" \
+            --set-secrets "LINE_CHANNEL_SECRET=line-channel-secret:latest,LINE_CHANNEL_ACCESS_TOKEN=line-channel-access-token:latest,ADMIN_API_SECRET=admin-api-secret:latest" \
+            --set-env-vars "GCP_PROJECT_ID=${PROJECT_ID},TZ=Asia/Tokyo" \
+            --allow-unauthenticated \
+            --quiet
+
+      # 管理サービス（SPA /app・/api、IAP保護）。
+      # ROLE=admin などの既存設定を壊さないよう --image のみ差し替える。
+      - name: Deploy jci-sed-admin
+        run: |
+          gcloud run deploy jci-sed-admin \
+            --image "${IMAGE_REPO}:${{ steps.sha.outputs.sha }}" \
+            --region "${REGION}" \
+            --project "${PROJECT_ID}" \
+            --quiet
+
+      - name: Health check (jci-sed-agent)
+        run: |
+          URL="$(gcloud run services describe jci-sed-agent \
+            --region "${REGION}" --project "${PROJECT_ID}" --format='value(status.url)')"
+          echo "URL=${URL}"
+          curl -fsS --retry 5 --retry-delay 5 --retry-all-errors "${URL}/health"
+
+      - name: Summary
+        run: |
+          {
+            echo "### デプロイ完了"
+            echo ""
+            echo "- commit: \`${{ steps.sha.outputs.sha }}\`"
+            echo "- image: \`${IMAGE_REPO}:${{ steps.sha.outputs.sha }}\`"
+            for s in jci-sed-agent jci-sed-admin; do
+              rev="$(gcloud run services describe "$s" --region "${REGION}" \
+                --project "${PROJECT_ID}" --format='value(status.latestReadyRevisionName)')"
+              echo "- ${s}: \`${rev}\`"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
