@@ -13,10 +13,12 @@
 - チャネルアクセストークン未設定でも Webhook は 200 を返し受信ログを残す（返信のみスキップ）。
 """
 import logging
+import os
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from linebot.v3 import WebhookParser
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import (
@@ -33,6 +35,7 @@ from linebot.v3.webhooks import (
     PostbackEvent,
     TextMessageContent,
 )
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import config, gmail, line_push
 from .admin_api import router as admin_router
@@ -99,20 +102,32 @@ def legacy_dashboard():
     return RedirectResponse(url="/app/", status_code=308)
 
 
+class SpaStaticFiles(StaticFiles):
+    """SPA 用の静的配信。画面の URL（/app/events 等）を直接開いても index.html を返す。
+
+    `StaticFiles(html=True)` は `/app/` の index.html しか返さず、クライアントルーティングの
+    URL を直接開く・再読み込みすると 404 になるため、拡張子の無いパスだけ index.html に倒す。
+    存在しない JS/CSS 等（拡張子あり）は従来どおり 404 にする（壊れたアセットを HTML で隠さない）。
+    """
+
+    async def get_response(self, path: str, scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404 or os.path.splitext(path)[1]:
+                raise
+            return await super().get_response("index.html", scope)
+
+
 def _mount_spa() -> None:
     """ビルド済み SPA (web/dist) があれば /app で静的配信する。
 
     Cloud Run(管理サービス)のイメージに dist を同梱する。dist が無いローカル/テスト
     環境では何もしない（API・webhook は通常通り動作）。
     """
-    import os
-
-    from fastapi.staticfiles import StaticFiles
-
     dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web", "dist")
     if os.path.isdir(dist):
-        # html=True で SPA のクライアントルーティング(index.html フォールバック)に対応
-        app.mount("/app", StaticFiles(directory=dist, html=True), name="spa")
+        app.mount("/app", SpaStaticFiles(directory=dist, html=True), name="spa")
         logger.info("SPA を /app で配信します: %s", dist)
 
 
