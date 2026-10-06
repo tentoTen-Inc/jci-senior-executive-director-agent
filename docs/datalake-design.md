@@ -65,7 +65,7 @@ LINE ──Webhook──►   │ /line/webhook: 署名検証 → ① 生イベ�
 | 取込 | Pub/Sub BigQuery サブスクリプション | `line-events-to-bq` | トピック→テーブル直結（プログラム無し） |
 | ファイル | Cloud Storage | `jci-sed-agent-line-content` | PDF・画像等の実体 |
 | ワーカー | Cloud Run（既存）＋ Push サブスクリプション | `line-events-worker` → `/pubsub/line-worker` | ファイル取得・送信取消・グループ名 |
-| 加工 | BigQuery ビュー | `line_lake.v_*` | 用途別の見やすい形（SQLで随時変更可） |
+| 加工 | BigQuery ビュー | `line_lake.v_*` | 用途別の見やすい形（SQLで随時変更可。`scripts/check_lake_views.py` でサンプル検証） |
 
 **リージョンはすべて `asia-northeast1`（東京）**。データは国内に置く。
 
@@ -236,7 +236,9 @@ LINE では送信から24時間以内に取り消せる。tick（毎時）で、
 
 1. **`scripts/setup_datalake.sh` の実行**（1回だけ）: API 有効化、トピック・DLQ、BigQuery データセット・テーブル・ビュー、
    バケット（公開禁止・ライフサイクル）、SA と権限、BigQuery/Push サブスクリプションを作成する。
-2. **Cloud Run の環境変数**（スクリプトが最後にコマンドを表示）: `LINE_EVENTS_TOPIC`、`LINE_CONTENT_BUCKET`、`PUBSUB_PUSH_SA`、`PUBSUB_PUSH_AUDIENCE`。
+2. **取込の開始**: ワーカーの設定（`LINE_CONTENT_BUCKET`・`PUBSUB_PUSH_SA`・`PUBSUB_PUSH_AUDIENCE`）はスクリプトが反映する。
+   周知のあと、スイッチの `LINE_EVENTS_TOPIC=line-events` を **agent と admin の両方**に設定して取込を開始する
+   （admin から送るお知らせ等も記録し、管理画面で閲覧するため）。
 3. **各グループへの周知投稿**（7章の文面）と、個人情報保護方針への追記。
 4. 保存期間（既定5年）を変える場合は指示する。
 
