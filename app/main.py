@@ -37,7 +37,7 @@ from linebot.v3.webhooks import (
 )
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import config, gmail, line_push
+from . import config, gmail, lake, line_push
 from .admin_api import router as admin_router
 from .calendar_import import pull_changes
 from .calendar_intent import ACTION_CAL, handle_calendar_postback
@@ -392,6 +392,10 @@ async def line_webhook(request: Request):
     except InvalidSignatureError as exc:
         logger.warning("署名検証に失敗しました。")
         raise HTTPException(status_code=400, detail="invalid signature") from exc
+
+    # 署名検証済みの生イベントをデータレイクへ（docs/datalake-design.md §4.1）。
+    # 応答処理より先に行い、応答処理が失敗しても記録は残す。publish 失敗でも応答は続ける。
+    lake.ingest_webhook(body)
 
     for event in events:
         handle_event(event)
