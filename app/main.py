@@ -36,6 +36,7 @@ from linebot.v3.webhooks import (
 
 from . import config, gmail, line_push
 from .admin_api import router as admin_router
+from .calendar_sync import retry_pending
 from .delivery import execute_delivery
 from .deps import get_repo
 from .gmail_import import import_gmail_notices
@@ -291,6 +292,15 @@ def handle_postback(user_id: str, data: str) -> list[Message]:
     return apply_postback(repo, member, data, now=datetime.now())
 
 
+def _tick_gcal_retry(repo, now: datetime) -> dict | None:
+    """カレンダー未反映イベントの再反映（F3-2）。失敗しても tick 本体は止めない。"""
+    try:
+        return retry_pending(repo, now)
+    except Exception:  # noqa: BLE001 - 催促処理を巻き込まない
+        logger.exception("カレンダー再反映に失敗しました")
+        return {"error": "gcal_retry_failed"}
+
+
 def _tick_gmail_import(repo, now: datetime) -> dict | None:
     """対外連絡のGmail取込（F5-1）。未設定・失敗でも tick 本体は止めない。"""
     if not gmail.is_configured():
@@ -312,6 +322,7 @@ def tasks_tick():
     repo = get_repo()
     now = datetime.now()
     gmail_result = _tick_gmail_import(repo, now)
+    gcal_result = _tick_gcal_retry(repo, now)
     jobs = plan_reminders(repo, now)
     results = []
     for job in jobs:
@@ -334,7 +345,9 @@ def tasks_tick():
                 "halted": report.halted,
             }
         )
-    return {"planned": len(jobs), "results": results, "gmail": gmail_result}
+    return {
+        "planned": len(jobs), "results": results, "gmail": gmail_result, "gcal": gcal_result,
+    }
 
 
 @app.post("/line/webhook")

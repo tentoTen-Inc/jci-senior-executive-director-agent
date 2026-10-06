@@ -28,8 +28,11 @@ app/
   guardrails.py    # 静音時間/レート/サニティ/キルスイッチ
   delivery.py      # 配信実行+監査ログ
   summary.py       # 集計サマリ・五役通知
+  gcal.py          # Googleカレンダー API(鍵レスimpersonation)
+  calendar_sync.py # イベント→カレンダー反映・再試行(F3-2)
   config.py        # 環境/シークレット解決
 scripts/import_roster.py  # 会員名簿xlsxの正規化インポート
+scripts/setup_calendar_sync.sh  # カレンダー連携のGCPセットアップ(1回のみ)
 tests/             # pytest
 ```
 

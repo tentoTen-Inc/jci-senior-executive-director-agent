@@ -13,9 +13,10 @@ from datetime import datetime
 from fastapi import APIRouter, Header, HTTPException, Response
 from pydantic import BaseModel
 
-from . import line_push
+from . import gcal, line_push
 from .attendance import aggregate, record_attendance
 from .audit import write_audit
+from .calendar_sync import push_event, retry_pending, touches_calendar
 from .delivery import execute_delivery
 from .deps import get_repo
 from .events import resolve_targets
@@ -32,6 +33,7 @@ from .models import (
     Event,
     EventStatus,
     EventType,
+    GcalSyncState,
     Member,
     MemberStatus,
     MemberType,
@@ -105,13 +107,15 @@ def create_event(
     x_goog_authenticated_user_email: str | None = Header(default=None),
 ):
     repo = get_repo()
-    event = Event(event_id=f"ev_{uuid.uuid4().hex[:10]}", **payload.model_dump())
+    event = Event(
+        event_id=f"ev_{uuid.uuid4().hex[:10]}", updated_at=datetime.now(), **payload.model_dump()
+    )
     repo.upsert_event(event)
     write_audit(
         repo, actor=_actor(x_goog_authenticated_user_email), action="event.create",
         target=event.event_id, detail=event.title,
     )
-    return event
+    return push_event(repo, event)
 
 
 @router.get("/events")
@@ -156,13 +160,106 @@ def update_event(
     data = _set_fields(payload)
     if "title" in data and not (data["title"] or "").strip():
         raise HTTPException(status_code=400, detail="タイトルは必須です。")
-    updated = event.model_copy(update=data)
+    updated = event.model_copy(update={**data, "updated_at": datetime.now()})
     repo.upsert_event(updated)
     write_audit(
         repo, actor=_actor(x_goog_authenticated_user_email), action="event.update",
         target=event_id, detail=",".join(sorted(data)),
     )
+    if touches_calendar(set(data)):
+        updated = push_event(repo, updated)
     return updated
+
+
+# --------------------------------------------------------------------------- #
+# 中止・再開・カレンダー同期（F3-2, docs/calendar-design.md §5.1）
+# --------------------------------------------------------------------------- #
+def _require_event(repo, event_id: str) -> Event:
+    event = repo.get_event(event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="event not found")
+    return event
+
+
+@router.post("/events/{event_id}/cancel")
+def cancel_event(
+    event_id: str,
+    x_goog_authenticated_user_email: str | None = Header(default=None),
+):
+    """イベントを中止にする（出欠データは保持）。カレンダー予定は削除する。"""
+    repo = get_repo()
+    event = _require_event(repo, event_id)
+    if event.status == EventStatus.cancelled:
+        return event
+    cancelled = event.model_copy(
+        update={"status": EventStatus.cancelled, "updated_at": datetime.now()}
+    )
+    repo.upsert_event(cancelled)
+    write_audit(
+        repo, actor=_actor(x_goog_authenticated_user_email), action="event.cancel",
+        target=event_id, detail=event.title,
+    )
+    return push_event(repo, cancelled)
+
+
+class EventRestore(BaseModel):
+    status: EventStatus = EventStatus.open
+
+
+@router.post("/events/{event_id}/restore")
+def restore_event(
+    event_id: str,
+    payload: EventRestore | None = None,
+    x_goog_authenticated_user_email: str | None = Header(default=None),
+):
+    """中止したイベントを再開する（既定は open）。カレンダー予定を作り直す。"""
+    repo = get_repo()
+    event = _require_event(repo, event_id)
+    status = (payload or EventRestore()).status
+    if status == EventStatus.cancelled:
+        raise HTTPException(status_code=400, detail="再開後の状態に cancelled は指定できません。")
+    if event.status != EventStatus.cancelled:
+        raise HTTPException(status_code=409, detail="中止されていないイベントです。")
+    restored = event.model_copy(update={"status": status, "updated_at": datetime.now()})
+    repo.upsert_event(restored)
+    write_audit(
+        repo, actor=_actor(x_goog_authenticated_user_email), action="event.restore",
+        target=event_id, detail=str(status),
+    )
+    return push_event(repo, restored)
+
+
+@router.post("/events/{event_id}/gcal-sync")
+def sync_event_to_gcal(event_id: str):
+    """このイベントをカレンダーへ再反映する（エラー時の手動リトライ）。"""
+    repo = get_repo()
+    return push_event(repo, _require_event(repo, event_id))
+
+
+@router.post("/gcal/backfill")
+def gcal_backfill():
+    """これから開催の未反映イベントをまとめてカレンダーへ反映する。"""
+    if not gcal.is_configured():
+        raise HTTPException(
+            status_code=503, detail="カレンダー連携が未設定です（GCAL_CALENDAR_ID）。"
+        )
+    return retry_pending(get_repo(), datetime.now())
+
+
+@router.get("/gcal/status")
+def gcal_status():
+    """カレンダー連携の状態（有効/無効・未反映件数・直近エラー）。"""
+    events = get_repo().list_events()
+    unsynced = [e for e in events if e.gcal_sync_state != GcalSyncState.synced]
+    errors = [e for e in events if e.gcal_sync_state == GcalSyncState.error]
+    return {
+        "enabled": gcal.is_configured(),
+        "calendar_id": gcal.calendar_id(),
+        "unsynced": len(unsynced),
+        "errors": [
+            {"event_id": e.event_id, "title": e.title, "error": e.gcal_error} for e in errors[:10]
+        ],
+    }
 
 
 # --------------------------------------------------------------------------- #
