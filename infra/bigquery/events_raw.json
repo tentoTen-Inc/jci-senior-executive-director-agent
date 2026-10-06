@@ -1,0 +1,7 @@
+[
+  {"name": "subscription_name", "type": "STRING", "mode": "NULLABLE", "description": "書き込んだ Pub/Sub サブスクリプション"},
+  {"name": "message_id", "type": "STRING", "mode": "NULLABLE", "description": "Pub/Sub メッセージID"},
+  {"name": "publish_time", "type": "TIMESTAMP", "mode": "NULLABLE", "description": "Pub/Sub の publish 時刻（パーティション列）"},
+  {"name": "data", "type": "JSON", "mode": "NULLABLE", "description": "封筒 {v,id,kind,received_at,destination,payload}（docs/datalake-design.md §3.1）"},
+  {"name": "attributes", "type": "JSON", "mode": "NULLABLE", "description": "Pub/Sub 属性 {kind,event_type,message_type,source_type}"}
+]

@@ -32,9 +32,14 @@ app/
   calendar_sync.py # イベント→カレンダー反映・再試行(F3-2)
   calendar_import.py # カレンダー→システム差分取込(F3-2)
   calendar_intent.py # LINE自然文での予定登録・変更・中止(役員)
+  lake.py          # LINEイベントのデータレイク取込(Webhook→Pub/Sub→BigQuery)
   config.py        # 環境/シークレット解決
 scripts/import_roster.py  # 会員名簿xlsxの正規化インポート
 scripts/setup_calendar_sync.sh  # カレンダー連携のGCPセットアップ(1回のみ)
+scripts/setup_datalake.sh  # データレイクのGCPセットアップ(冪等)
+scripts/check_lake_views.py  # ビューSQLをサンプルでBigQuery検証(開発用)
+scripts/replay_ingest_fallback.py  # publish失敗で退避したイベントの再投入
+infra/bigquery/   # events_raw のスキーマとビューSQL
 tests/             # pytest
 ```
 
