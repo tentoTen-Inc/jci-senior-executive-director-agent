@@ -1,0 +1,14 @@
+[
+  {"name": "chunk_id", "type": "STRING", "mode": "REQUIRED", "description": "{source_kind}:{source_id}:{chunk_no}（一意）"},
+  {"name": "source_kind", "type": "STRING", "mode": "NULLABLE", "description": "file / message"},
+  {"name": "source_id", "type": "STRING", "mode": "NULLABLE", "description": "LINE のメッセージID"},
+  {"name": "chunk_no", "type": "INTEGER", "mode": "NULLABLE", "description": "何番目の断片か"},
+  {"name": "scope_type", "type": "STRING", "mode": "NULLABLE", "description": "group / room / user（どこで共有されたか）"},
+  {"name": "scope_id", "type": "STRING", "mode": "NULLABLE", "description": "グループID・複数人トークID・個別トークならユーザーID"},
+  {"name": "user_id", "type": "STRING", "mode": "NULLABLE", "description": "送信者"},
+  {"name": "sent_at", "type": "TIMESTAMP", "mode": "NULLABLE", "description": "送信時刻"},
+  {"name": "title", "type": "STRING", "mode": "NULLABLE", "description": "ファイル名（メッセージは null）"},
+  {"name": "content", "type": "STRING", "mode": "NULLABLE", "description": "見出し付きの断片本文（ベクトル化の入力）"},
+  {"name": "embedding", "type": "FLOAT", "mode": "REPEATED", "description": "gemini-embedding-001 / 768次元"},
+  {"name": "indexed_at", "type": "TIMESTAMP", "mode": "NULLABLE", "description": "索引した時刻"}
+]

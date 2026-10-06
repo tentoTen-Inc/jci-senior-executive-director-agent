@@ -13,6 +13,7 @@ from datetime import datetime
 
 from linebot.v3.messaging import Message, TextMessage
 
+from . import lake_knowledge
 from .inference import record_inference
 from .llm import answer_question, model_name
 from .models import (
@@ -70,6 +71,11 @@ def answer_member_question(
 ) -> list[Message] | None:
     """自由文の質問に答える。LLMが使えない場合は None（呼び側でメニュー誘導）。"""
     context = build_context(repo, member, now=now)
+    # LINE で共有された資料・やり取りから、質問者が見られる範囲で関連するものを足す（P6-4a）
+    chunks = lake_knowledge.search(member.line_user_id, question)
+    lake_section = lake_knowledge.context_section(repo, chunks)
+    if lake_section:
+        context = f"{context}\n\n{lake_section}"
     history = _history_text(repo.get_conversation(member.member_id))
 
     outcome = answer_question(question, context, history)

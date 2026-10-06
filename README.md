@@ -37,10 +37,13 @@ app/
   lake_maintenance.py # 送信取消の本文消去(tick)
   lake_query.py    # データレイク(BigQuery)の読み取り(パラメータ化クエリ)
   lake_api.py      # 管理画面「LINEグループ」API(グループ・会話・ファイル)
+  lake_knowledge.py # LINEの資料・やり取りの索引と検索(RAG, BigQuery ML)
+  jpdate.py        # 日本語の日付表記(曜日)
   config.py        # 環境/シークレット解決
 scripts/import_roster.py  # 会員名簿xlsxの正規化インポート
 scripts/setup_calendar_sync.sh  # カレンダー連携のGCPセットアップ(1回のみ)
 scripts/setup_datalake.sh  # データレイクのGCPセットアップ(冪等)
+scripts/setup_lake_ai.sh  # AI活用(埋め込みモデル・索引)のGCPセットアップ(冪等)
 scripts/check_lake_views.py  # ビューSQLをサンプルでBigQuery検証(開発用)
 scripts/replay_ingest_fallback.py  # publish失敗で退避したイベントの再投入
 infra/bigquery/   # events_raw のスキーマとビューSQL
