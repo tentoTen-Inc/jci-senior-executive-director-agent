@@ -37,7 +37,7 @@ from linebot.v3.webhooks import (
 )
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import config, gmail, lake, line_push
+from . import config, gmail, lake, line_push, line_worker
 from .admin_api import router as admin_router
 from .calendar_import import pull_changes
 from .calendar_intent import ACTION_CAL, handle_calendar_postback
@@ -46,6 +46,7 @@ from .delivery import execute_delivery
 from .deps import get_repo
 from .gmail_import import import_gmail_notices
 from .invite import verify_and_link
+from .lake_maintenance import redact_unsent
 from .line_messages import apply_postback, build_attendance_request
 from .member_menu import build_menu, handle_member_text
 from .notice_actions import ACTION_NOTICE_DONE, handle_done_postback
@@ -350,6 +351,7 @@ def tasks_tick():
     now = datetime.now()
     gmail_result = _tick_gmail_import(repo, now)
     gcal_result = _tick_gcal(repo, now)
+    lake_result = redact_unsent()
     jobs = plan_reminders(repo, now)
     results = []
     for job in jobs:
@@ -374,7 +376,34 @@ def tasks_tick():
         )
     return {
         "planned": len(jobs), "results": results, "gmail": gmail_result, "gcal": gcal_result,
+        "lake": lake_result,
     }
+
+
+@app.post("/pubsub/line-worker")
+async def pubsub_line_worker(request: Request):
+    """データレイクのワーカー（Pub/Sub Push, docs/datalake-design.md §4.2）。
+
+    Pub/Sub の OIDC トークンを検証する（/admin 等の X-Admin-Token とは別の認証）。
+    2xx で処理済み（ack）、それ以外は Pub/Sub が間隔を空けて再送し、5回失敗で DLQ へ退避。
+    """
+    if not line_worker.is_configured():
+        # 設定前に届いた分は再送させる（捨てない）
+        return Response(status_code=503)
+    if not line_worker.verify_push(request.headers.get("Authorization")):
+        return Response(status_code=401)
+    try:
+        env = line_worker.decode_push(await request.json())
+    except Exception:  # noqa: BLE001 - 壊れたメッセージは再送しても直らない
+        logger.exception("Push メッセージを解釈できません（破棄）")
+        return Response(status_code=204)
+    try:
+        result = line_worker.handle_envelope(get_repo(), env, datetime.now())
+    except Exception:  # noqa: BLE001 - 一時障害は再送で回復させる
+        logger.exception("ワーカー処理に失敗（再送待ち）: id=%s", env.get("id"))
+        return Response(status_code=500)
+    logger.info("lake worker: id=%s result=%s", env.get("id"), result)
+    return Response(status_code=204)
 
 
 @app.post("/line/webhook")

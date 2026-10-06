@@ -21,6 +21,7 @@ from .models import (
     ExternalNotice,
     InferenceLog,
     InviteCode,
+    LineGroup,
     LinkState,
     Member,
     MemberStatus,
@@ -68,6 +69,9 @@ class Repository(Protocol):
     def save_gcal_sync_state(self, state: CalendarSyncState) -> None: ...
     def save_calendar_op(self, op: PendingCalendarOp) -> None: ...
     def get_calendar_op(self, op_id: str) -> PendingCalendarOp | None: ...
+    def save_line_group(self, group: LineGroup) -> None: ...
+    def get_line_group(self, group_id: str) -> LineGroup | None: ...
+    def list_line_groups(self) -> list[LineGroup]: ...
 
     # --- delivery ---
     def save_delivery_job(self, job: DeliveryJob) -> None: ...
@@ -128,6 +132,7 @@ class InMemoryRepository:
         self._settings: Settings = Settings()
         self._gcal_sync: CalendarSyncState = CalendarSyncState()
         self._calendar_ops: dict[str, PendingCalendarOp] = {}
+        self._line_groups: dict[str, LineGroup] = {}
         self._jobs: dict[str, DeliveryJob] = {}
         self._logs: list[DeliveryLog] = []
         self._escalations: dict[str, Escalation] = {}
@@ -233,6 +238,16 @@ class InMemoryRepository:
     def get_calendar_op(self, op_id: str) -> PendingCalendarOp | None:
         op = self._calendar_ops.get(op_id)
         return op.model_copy(deep=True) if op else None
+
+    def save_line_group(self, group: LineGroup) -> None:
+        self._line_groups[group.group_id] = group.model_copy(deep=True)
+
+    def get_line_group(self, group_id: str) -> LineGroup | None:
+        group = self._line_groups.get(group_id)
+        return group.model_copy(deep=True) if group else None
+
+    def list_line_groups(self) -> list[LineGroup]:
+        return [g.model_copy(deep=True) for g in self._line_groups.values()]
 
     # --- delivery ---
     def save_delivery_job(self, job: DeliveryJob) -> None:

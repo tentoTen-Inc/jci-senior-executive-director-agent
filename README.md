@@ -33,6 +33,8 @@ app/
   calendar_import.py # カレンダー→システム差分取込(F3-2)
   calendar_intent.py # LINE自然文での予定登録・変更・中止(役員)
   lake.py          # LINEイベントのデータレイク取込(Webhook→Pub/Sub→BigQuery)
+  line_worker.py   # データレイクのワーカー(ファイル取得→GCS・送信取消・グループ名)
+  lake_maintenance.py # 送信取消の本文消去(tick)
   config.py        # 環境/シークレット解決
 scripts/import_roster.py  # 会員名簿xlsxの正規化インポート
 scripts/setup_calendar_sync.sh  # カレンダー連携のGCPセットアップ(1回のみ)

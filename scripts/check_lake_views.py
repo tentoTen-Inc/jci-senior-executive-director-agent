@@ -48,6 +48,23 @@ SAMPLES = [
                     "source": {"type": "group", "groupId": "G1"}}),
     {"v": 1, "id": "gp1", "kind": "group_profile", "received_at": "2026-10-06T12:05:00.000+09:00",
      "payload": {"groupId": "G1", "groupName": "猪苗代JC 理事会", "pictureUrl": "https://x"}},
+    {"v": 1, "id": "content_m2_stored", "kind": "content",
+     "received_at": "2026-10-06T12:01:05.000+09:00",
+     "payload": {"message_id": "m2", "status": "stored", "source_type": "group",
+                 "group_id": "G1", "user_id": "U1", "sent_at_ms": 1791241260000,
+                 "file_name": "議案.pdf", "content_type": "application/pdf", "size": 12345,
+                 "sha256": "ab", "gcs_uri": "gs://b/line/content/m2/議案.pdf",
+                 "text": "第1号議案"}},
+    {"v": 1, "id": "content_m2_deleted_unsent", "kind": "content",
+     "received_at": "2026-10-06T12:02:00.000+09:00",
+     "payload": {"message_id": "m2", "status": "deleted_unsent", "source_type": "group",
+                 "group_id": "G1", "user_id": "U1", "sent_at_ms": 1791241260000}},
+    {"v": 1, "id": "content_m3_stored", "kind": "content",
+     "received_at": "2026-10-06T12:03:00.000+09:00",
+     "payload": {"message_id": "m3", "status": "stored", "source_type": "group",
+                 "group_id": "G1", "user_id": "U2", "sent_at_ms": 1791241320000,
+                 "file_name": "m3.jpg", "content_type": "image/jpeg", "size": 2048,
+                 "gcs_uri": "gs://b/line/content/m3/m3.jpg"}},
 ]
 
 
