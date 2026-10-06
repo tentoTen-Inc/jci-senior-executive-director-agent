@@ -55,6 +55,9 @@ def _fmt_dt(dt: datetime) -> str:
     return month_day_time(dt)
 
 
+#: これ以下の長さの入力はコマンド（「次回の予定」「出欠確認」等）とみなし、キーワードで定型応答する
+SHORT_COMMAND_MAX = 12
+
 #: 終了時刻が未設定のイベントは、開始からこの時間までを「開催中」とみなす
 DEFAULT_DURATION = timedelta(hours=2)
 
@@ -138,21 +141,28 @@ def handle_member_text(
         if calendar is not None:
             return calendar
 
-    if any(k in t for k in ("予定", "次回", "いつ")):
+    # キーワードの定型応答は、メニューのボタンか短い文（コマンド的な入力）のときだけ。
+    # 長い自由文（「福島ブロックの予定を教えて」等）は AI に回す（docs/lake-ai-design.md §4.3）。
+    from_menu = text.strip().startswith("menu|")
+    command = from_menu or len(t) <= SHORT_COMMAND_MAX
+
+    if command and any(k in t for k in ("予定", "次回", "いつ")):
         return [next_schedule_message(repo, now)]
-    if any(k in t for k in ("自分の出欠", "出欠状況", "確認")):
+    if command and any(k in t for k in ("自分の出欠", "出欠状況", "確認")):
         return [my_attendance_message(repo, member, now)]
     if any(k in t for k in ("出欠を回答", "回答", "出席", "欠席")):
         # 「来週の例会は欠席で」のような自由文は、対象と出欠を解釈して確認する（F4-7）。
         # メニュー由来の定型文や解釈できない場合は従来の出欠依頼を返す。
-        if not text.strip().startswith("menu|"):
+        if not from_menu:
             intent = try_attendance_intent(repo, member, t, now=now)
             if intent is not None:
                 return intent
-        return [answer_prompt_message(repo, member, now)]
-    if any(k in t for k in ("事務局", "連絡", "問い合わせ", "問合せ")):
+        if command:
+            return [answer_prompt_message(repo, member, now)]
+        # 長い自由文で出欠の意図でなければ AI へ
+    if command and any(k in t for k in ("事務局", "連絡", "問い合わせ", "問合せ")):
         return [record_contact(repo, member, now)]
-    if any(k in t for k in ("メニュー", "menu", "ヘルプ", "help")):
+    if command and any(k in t for k in ("メニュー", "menu", "ヘルプ", "help")):
         return [build_menu()]
 
     # 定型に当たらない自由文は自LOM情報を根拠にした応答を試す（F8, assistant）。

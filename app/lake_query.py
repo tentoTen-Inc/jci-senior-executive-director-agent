@@ -81,8 +81,7 @@ def to_records(res: dict) -> list[dict]:
     ]
 
 
-def query(sql: str, params: dict | None = None) -> list[dict]:
-    """クエリを実行して行を返す。完了しなかった・失敗したら QueryError。"""
+def _run(sql: str, params: dict | None) -> dict:
     body = {
         "query": sql,
         "useLegacySql": False,
@@ -94,4 +93,14 @@ def query(sql: str, params: dict | None = None) -> list[dict]:
     res = _post(body)
     if not res.get("jobComplete", False):
         raise QueryError("クエリが時間内に終わりませんでした。")
-    return to_records(res)
+    return res
+
+
+def query(sql: str, params: dict | None = None) -> list[dict]:
+    """クエリを実行して行を返す。完了しなかった・失敗したら QueryError。"""
+    return to_records(_run(sql, params))
+
+
+def execute(sql: str, params: dict | None = None) -> int:
+    """DML（INSERT/UPDATE/DELETE）を実行し、変更した行数を返す。"""
+    return int(_run(sql, params).get("numDmlAffectedRows", 0) or 0)

@@ -47,6 +47,7 @@ from .deps import get_repo
 from .gmail_import import import_gmail_notices
 from .invite import verify_and_link
 from .lake_api import router as lake_router
+from .lake_knowledge import index_knowledge
 from .lake_maintenance import redact_unsent
 from .line_messages import apply_postback, build_attendance_request
 from .member_menu import build_menu, handle_member_text
@@ -354,7 +355,7 @@ def tasks_tick():
     now = datetime.now()
     gmail_result = _tick_gmail_import(repo, now)
     gcal_result = _tick_gcal(repo, now)
-    lake_result = redact_unsent()
+    lake_result = {"redact": redact_unsent(), "knowledge": index_knowledge()}
     jobs = plan_reminders(repo, now)
     results = []
     for job in jobs:
