@@ -32,7 +32,7 @@ LINE に流れた**資料（PDF）とやり取り**を、ボットの回答の�
 v_files（PDF本文）─┐                 質問 ──► ML.GENERATE_EMBEDDING（RETRIEVAL_QUERY）
 v_messages_for_ai ─┼► 分割 ─► ML.GENERATE_EMBEDDING            │
 （20字以上の発言）  ┘        （RETRIEVAL_DOCUMENT）            ▼
-                                   │           VECTOR_SEARCH（見られる範囲に絞った knowledge_chunks）
+                                   │     見られる範囲に絞った knowledge_chunks を ML.DISTANCE で順位付け
                                    ▼                           │ 上位5件・距離のしきい値
                      line_lake.knowledge_chunks ◄──────────────┘
                                                                ▼
@@ -44,7 +44,9 @@ v_messages_for_ai ─┼► 分割 ─► ML.GENERATE_EMBEDDING            │
 
 - **ベクトル化も検索も BigQuery の中で完結**（BigQuery ML のリモートモデル経由で Vertex AI を呼ぶ）。アプリは SQL を1本投げるだけで、新しいライブラリやベクトルDBは不要。
 - モデル: **`gemini-embedding-001`**（多言語・日本語に強い）、768次元。
-- 件数が数万を超えたら `CREATE VECTOR INDEX` を追加して検索を高速化できる（それまでは総当たりで十分速い）。
+- 検索は「見られる範囲で絞り込み → `ML.DISTANCE`（コサイン）で順位付け」の総当たり。`VECTOR_SEARCH` は
+  絞り込み付きサブクエリを入力に取れないことを BigQuery 上で確認したため、範囲制御を確実にするこの形にした。
+  件数が数十万を超えたら、範囲の判定を別クエリにして `VECTOR_SEARCH`＋ベクトル索引に切り替える。
 
 ---
 
@@ -131,7 +133,7 @@ v_messages_for_ai ─┼► 分割 ─► ML.GENERATE_EMBEDDING            │
 
 | フェーズ | 内容 |
 |---|---|
-| **P6-4a** | リモートモデル・`knowledge_chunks`・毎時の索引と取消削除・見られる範囲で絞った検索・回答への組み込み（出典）・振り分けの見直し・`scripts/setup_lake_ai.sh` |
+| **P6-4a** | リモートモデル・`knowledge_chunks`・毎時の索引と取消削除・見られる範囲で絞った検索（`ML.DISTANCE`）・回答への組み込み（出典）・振り分けの見直し・`scripts/setup_lake_ai.sh` |
 | **P6-4b** | `ai_answer`/`ai_feedback` の記録、👍👎、`v_ai_answers`、管理画面「AI応答の振り返り」と CSV 出力 |
 
 ## 8. 手動作業
