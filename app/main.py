@@ -430,7 +430,11 @@ async def line_webhook(request: Request):
     lake.ingest_webhook(body)
 
     for event in events:
-        handle_event(event)
+        try:
+            handle_event(event)
+        except Exception:  # noqa: BLE001 - 1件の失敗で他のイベントを止めない
+            logger.exception("イベント処理に失敗しました: %s", type(event).__name__)
 
-    # LINE には常に 200 を返す（個別失敗は内部でログ化）
+    # LINE には常に 200 を返す（個別失敗は内部でログ化）。500 を返すと LINE が再送し、
+    # 同じ失敗を繰り返したり二重に返信したりするため。
     return Response(status_code=200)

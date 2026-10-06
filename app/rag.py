@@ -5,12 +5,15 @@
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 from .attendance import aggregate
 from .events import resolve_targets
 from .models import AttendanceStatus, EventStatus, Member
 from .repository import Repository
+
+logger = logging.getLogger("jci-agent.rag")
 
 MAX_EVENTS = 5
 MAX_NOTICES = 3
@@ -83,9 +86,18 @@ def _notice_lines(repo: Repository, member: Member) -> list[str]:
 
 
 def build_context(repo: Repository, member: Member, *, now: datetime) -> str:
-    """質問者に開示してよい情報だけを集めたコンテキスト文字列を返す。"""
+    """質問者に開示してよい情報だけを集めたコンテキスト文字列を返す。
+
+    材料の一部（予定・対外連絡）の取得に失敗しても、残りの材料で回答を続ける。
+    """
     lines = [f"# 猪苗代JC の現在の情報（基準時刻 {_fmt_dt(now)}）"]
     lines += _self_lines(member)
-    lines += _event_lines(repo, member, now)
-    lines += _notice_lines(repo, member)
+    for name, collect in (
+        ("予定", lambda: _event_lines(repo, member, now)),
+        ("対外連絡", lambda: _notice_lines(repo, member)),
+    ):
+        try:
+            lines += collect()
+        except Exception:  # noqa: BLE001 - 一部の材料が無くても応答は返す
+            logger.exception("回答材料（%s）の取得に失敗しました", name)
     return "\n".join(lines)

@@ -285,13 +285,13 @@ class FirestoreRepository:
         return None
 
     def list_notices(self, *, status: str | None = None) -> list[ExternalNotice]:
-        from google.cloud.firestore import Query
-
+        # 「status で絞り込み＋received_at で並べ替え」を Firestore に任せると複合インデックスが
+        # 必要になり、無いと FailedPrecondition で落ちる。件数は少ないのでアプリ側で並べ替える。
         col = self._db.collection(COL_NOTICES)
         if status is not None:
             col = col.where("status", "==", status)
-        col = col.order_by("received_at", direction=Query.DESCENDING)
-        return [ExternalNotice.model_validate(s.to_dict()) for s in col.stream()]
+        notices = [ExternalNotice.model_validate(s.to_dict()) for s in col.stream()]
+        return sorted(notices, key=lambda n: n.received_at, reverse=True)
 
     def upsert_notice_action(self, action: NoticeAction) -> None:
         self._db.collection(COL_NOTICE_ACTIONS).document(action.action_id).set(
