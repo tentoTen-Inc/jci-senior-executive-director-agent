@@ -77,9 +77,10 @@ fi
 
 echo ">> ビューを作成・更新"
 for f in "${ROOT}"/infra/bigquery/views/*.sql; do
-  sql="$(sed -e "s/\${PROJECT}/${PROJECT}/g" -e "s/\${DATASET}/${DATASET}/g" "${f}")"
-  bq --project_id="${PROJECT}" --location="${REGION}" query --use_legacy_sql=false \
-    --quiet "${sql}" >/dev/null
+  # SQL は標準入力で渡す（引数で渡すと先頭のコメント "-- …" を bq がオプションと誤解する）
+  sed -e "s/\${PROJECT}/${PROJECT}/g" -e "s/\${DATASET}/${DATASET}/g" "${f}" \
+    | bq --project_id="${PROJECT}" --location="${REGION}" query --use_legacy_sql=false \
+      --quiet >/dev/null
   echo "   $(basename "${f}")"
 done
 
