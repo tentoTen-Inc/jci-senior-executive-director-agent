@@ -8,6 +8,7 @@ const nav = [
   { to: "/notices", label: "対外連絡" },
   { to: "/surveys", label: "アンケート" },
   { to: "/line-groups", label: "LINEグループ" },
+  { to: "/ai-answers", label: "AI応答の振り返り" },
   { to: "/agent", label: "エージェントKPI" },
   { to: "/settings", label: "設定" },
 ];

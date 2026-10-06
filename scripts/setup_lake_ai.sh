@@ -77,6 +77,14 @@ else
   echo "   既に存在: table knowledge_chunks"
 fi
 
+echo ">> ビューを作成・更新（v_ai_answers を含む）"
+for f in "${ROOT}"/infra/bigquery/views/*.sql; do
+  sed -e "s/\${PROJECT}/${PROJECT}/g" -e "s/\${DATASET}/${DATASET}/g" "${f}" \
+    | bq --project_id="${PROJECT}" --location="${REGION}" query --use_legacy_sql=false \
+      --quiet >/dev/null
+  echo "   $(basename "${f}")"
+done
+
 # --------------------------------------------------------------------------- #
 # アプリの権限: 接続の利用 + データセットの編集（索引の追加・削除、モデルの利用）
 # --------------------------------------------------------------------------- #

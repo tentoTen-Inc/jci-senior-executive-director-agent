@@ -71,6 +71,21 @@ SAMPLES = [
     {"v": 1, "id": "out2", "kind": "outbound", "received_at": "2026-10-06T18:00:00.000+09:00",
      "payload": {"channel": "push", "reply_token": None, "to": "U9",
                  "messages": [{"type": "text", "text": "出欠のご回答をお願いします"}]}},
+    {"v": 1, "id": "ans_1", "kind": "ai_answer", "received_at": "2026-10-06T21:40:00.000+09:00",
+     "payload": {"answer_id": "ans_1", "member_id": "sed", "user_id": "U1",
+                 "question": "福島ブロックの予定を教えて",
+                 "answer": "資料によると10月8日に引継ぎがあります[1]。",
+                 "sources": [{"chunk_id": "file:m2:0", "title": "議案.pdf", "distance": 0.2}],
+                 "grounded": True, "needs_human": False, "model": "gemini-2.5-pro",
+                 "input_tokens": 1200, "output_tokens": 80}},
+    {"v": 1, "id": "ans_2", "kind": "ai_answer", "received_at": "2026-10-06T21:45:00.000+09:00",
+     "payload": {"answer_id": "ans_2", "member_id": "sed", "user_id": "U1",
+                 "question": "会費はいくら？", "answer": "分かりかねます。", "sources": [],
+                 "grounded": False, "needs_human": True, "model": "gemini-2.5-pro"}},
+    {"v": 1, "id": "fb1", "kind": "ai_feedback", "received_at": "2026-10-06T21:41:00.000+09:00",
+     "payload": {"answer_id": "ans_1", "rating": "down"}},
+    {"v": 1, "id": "fb2", "kind": "ai_feedback", "received_at": "2026-10-06T21:42:00.000+09:00",
+     "payload": {"answer_id": "ans_1", "rating": "up"}},
 ]
 
 

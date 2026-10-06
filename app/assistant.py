@@ -13,7 +13,7 @@ from datetime import datetime
 
 from linebot.v3.messaging import Message, TextMessage
 
-from . import lake_knowledge
+from . import ai_feedback, lake, lake_knowledge
 from .inference import record_inference
 from .llm import answer_question, model_name
 from .models import (
@@ -95,4 +95,14 @@ def answer_member_question(
         _escalate(repo, member, question, now=now)
         text = f"{text}\n\n{ESCALATION_NOTE}"
     _remember(repo, member, question, text, now=now)
-    return [TextMessage(text=text)]
+
+    message = TextMessage(text=text)
+    if lake.is_enabled():
+        # 回答・出典・根拠の有無を記録し、👍/👎 で評価してもらう（P6-4b）
+        answer_id = ai_feedback.new_answer_id()
+        ai_feedback.record_answer(
+            answer_id, member, question, text, sources=chunks,
+            grounded=result.grounded, needs_human=result.needs_human, usage=outcome.usage,
+        )
+        message = ai_feedback.with_feedback_buttons(message, answer_id)
+    return [message]

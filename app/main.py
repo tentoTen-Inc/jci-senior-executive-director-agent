@@ -37,7 +37,7 @@ from linebot.v3.webhooks import (
 )
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import config, gmail, lake, line_push, line_worker
+from . import ai_feedback, config, gmail, lake, line_push, line_worker
 from .admin_api import router as admin_router
 from .calendar_import import pull_changes
 from .calendar_intent import ACTION_CAL, handle_calendar_postback
@@ -311,6 +311,8 @@ def handle_postback(user_id: str, data: str) -> list[Message]:
         return handle_member_text(repo, member, data, now=datetime.now())
     if data.startswith(f"{ACTION_CAL}|"):
         return handle_calendar_postback(repo, member, data, now=datetime.now())
+    if data.startswith(f"{ai_feedback.ACTION_FEEDBACK}|"):
+        return ai_feedback.handle_feedback_postback(member, data)
     if data.startswith(f"{ACTION_NOTICE_DONE}|"):
         return handle_done_postback(repo, member.member_id, data)
     return apply_postback(repo, member, data, now=datetime.now())
