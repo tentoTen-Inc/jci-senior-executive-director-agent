@@ -36,6 +36,7 @@ from linebot.v3.webhooks import (
 
 from . import config, gmail, line_push
 from .admin_api import router as admin_router
+from .calendar_import import pull_changes
 from .calendar_sync import retry_pending
 from .delivery import execute_delivery
 from .deps import get_repo
@@ -292,13 +293,21 @@ def handle_postback(user_id: str, data: str) -> list[Message]:
     return apply_postback(repo, member, data, now=datetime.now())
 
 
-def _tick_gcal_retry(repo, now: datetime) -> dict | None:
-    """カレンダー未反映イベントの再反映（F3-2）。失敗しても tick 本体は止めない。"""
+def _tick_gcal(repo, now: datetime) -> dict | None:
+    """カレンダー連携（F3-2）。先に差分を取り込み、その後に未反映分を再反映する。
+
+    取込を先にするのは、カレンダーで直された内容を古いシステム側の値で上書きしないため。
+    失敗しても tick 本体（催促）は止めない。
+    """
     try:
-        return retry_pending(repo, now)
+        pulled = pull_changes(repo, now)
+        retried = retry_pending(repo, now)
     except Exception:  # noqa: BLE001 - 催促処理を巻き込まない
-        logger.exception("カレンダー再反映に失敗しました")
-        return {"error": "gcal_retry_failed"}
+        logger.exception("カレンダー連携に失敗しました")
+        return {"error": "gcal_failed"}
+    if pulled is None and retried is None:
+        return None
+    return {"pull": pulled, "retry": retried}
 
 
 def _tick_gmail_import(repo, now: datetime) -> dict | None:
@@ -322,7 +331,7 @@ def tasks_tick():
     repo = get_repo()
     now = datetime.now()
     gmail_result = _tick_gmail_import(repo, now)
-    gcal_result = _tick_gcal_retry(repo, now)
+    gcal_result = _tick_gcal(repo, now)
     jobs = plan_reminders(repo, now)
     results = []
     for job in jobs:

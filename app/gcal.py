@@ -107,3 +107,22 @@ def delete_event(gcal_event_id: str) -> None:
         if exc.status in (404, 410):
             return
         raise
+
+
+def list_events(*, sync_token: str | None = None, time_min: str | None = None,
+                page_token: str | None = None) -> dict:
+    """予定の一覧（差分取得）。繰り返し予定は個々の回に展開する。
+
+    sync_token を渡すと前回からの差分だけ返る（削除は status=cancelled で届く）。
+    トークン失効時は 410 の GcalError になるので、呼び出し側で全件取得に戻す。
+    """
+    params: dict = {"singleEvents": "true", "maxResults": "250"}
+    if sync_token:
+        params["syncToken"] = sync_token
+    else:
+        params["showDeleted"] = "false"
+        if time_min:
+            params["timeMin"] = time_min
+    if page_token:
+        params["pageToken"] = page_token
+    return _request("GET", _events_url(params=params))
