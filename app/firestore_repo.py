@@ -10,6 +10,7 @@ from datetime import datetime
 from .models import (
     Attendance,
     AuditLog,
+    CalendarSyncState,
     Conversation,
     DeliveryJob,
     DeliveryLog,
@@ -48,6 +49,7 @@ COL_NOTICE_ACTIONS = "noticeActions"
 COL_CONVERSATIONS = "conversations"
 COL_SURVEYS = "surveys"
 SETTINGS_DOC = "global"
+GCAL_SYNC_DOC = "gcal_sync"
 
 
 class FirestoreRepository:
@@ -148,6 +150,18 @@ class FirestoreRepository:
 
     def save_settings(self, settings: Settings) -> None:
         self._db.collection(COL_SETTINGS).document(SETTINGS_DOC).set(settings.model_dump(mode="json"))
+
+    def get_gcal_sync_state(self) -> CalendarSyncState:
+        snap = self._db.collection(COL_SETTINGS).document(GCAL_SYNC_DOC).get()
+        return (
+            CalendarSyncState.model_validate(snap.to_dict())
+            if snap.exists else CalendarSyncState()
+        )
+
+    def save_gcal_sync_state(self, state: CalendarSyncState) -> None:
+        self._db.collection(COL_SETTINGS).document(GCAL_SYNC_DOC).set(
+            state.model_dump(mode="json")
+        )
 
     # --- delivery ---
     def save_delivery_job(self, job: DeliveryJob) -> None:
