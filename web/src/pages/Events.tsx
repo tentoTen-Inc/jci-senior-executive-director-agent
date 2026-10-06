@@ -30,6 +30,8 @@ type EventRow = {
 type GcalStatus = {
   enabled: boolean;
   calendar_id: string | null;
+  last_pulled_at: string | null;
+  pull_error: string | null;
   unsynced: number;
   errors: { event_id: string; title: string; error: string | null }[];
 };
@@ -247,6 +249,21 @@ export default function Events() {
     reload();
   }
 
+  async function pullNow() {
+    try {
+      const r = await api<{ created: number; updated: number; cancelled: number }>("/gcal/pull", {
+        method: "POST",
+      });
+      setMsg(
+        `カレンダーから取込: 新規 ${r.created} 件・更新 ${r.updated} 件・中止 ${r.cancelled} 件` +
+          (r.created ? "（新規は下書きです。配信するには状態を受付中にしてください）" : "")
+      );
+      reload();
+    } catch (err) {
+      setMsg((err as Error).message);
+    }
+  }
+
   async function backfill() {
     try {
       const r = await api<{ retried: number; synced: number; failed: number }>("/gcal/backfill", {
@@ -309,6 +326,20 @@ export default function Events() {
             {gcalStatus.enabled ? (
               <>
                 <span>📅 Googleカレンダー連携: {gcalStatus.calendar_id}</span>
+                <span>
+                  最終取込{" "}
+                  {gcalStatus.last_pulled_at
+                    ? gcalStatus.last_pulled_at.replace("T", " ").slice(0, 16)
+                    : "未実行"}
+                </span>
+                <button className="bg-slate-200 text-navy rounded px-2 py-0.5" onClick={pullNow}>
+                  今すぐ取り込む
+                </button>
+                {gcalStatus.pull_error && (
+                  <span className="text-red-600" title={gcalStatus.pull_error}>
+                    取込エラーあり
+                  </span>
+                )}
                 {gcalStatus.unsynced > 0 && (
                   <>
                     <span className="text-amber-700">未同期 {gcalStatus.unsynced} 件</span>

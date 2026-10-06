@@ -205,6 +205,14 @@ class Event(BaseModel):
     gcal_error: str | None = None
 
 
+class CalendarSyncState(BaseModel):
+    """カレンダー→システム差分取込の状態（シングルトン, docs/calendar-design.md §3.3）。"""
+
+    sync_token: str | None = None  # events.list の nextSyncToken
+    last_pulled_at: datetime | None = None
+    last_error: str | None = None
+
+
 class Attendance(BaseModel):
     event_id: str
     member_id: str

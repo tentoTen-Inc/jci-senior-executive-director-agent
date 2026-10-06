@@ -11,6 +11,7 @@ from typing import Protocol
 from .models import (
     Attendance,
     AuditLog,
+    CalendarSyncState,
     Conversation,
     DeliveryJob,
     DeliveryLog,
@@ -62,6 +63,8 @@ class Repository(Protocol):
     def get_policy(self, policy_id: str) -> ReminderPolicy | None: ...
     def get_settings(self) -> Settings: ...
     def save_settings(self, settings: Settings) -> None: ...
+    def get_gcal_sync_state(self) -> CalendarSyncState: ...
+    def save_gcal_sync_state(self, state: CalendarSyncState) -> None: ...
 
     # --- delivery ---
     def save_delivery_job(self, job: DeliveryJob) -> None: ...
@@ -120,6 +123,7 @@ class InMemoryRepository:
         self._attendances: dict[str, Attendance] = {}
         self._policies: dict[str, ReminderPolicy] = {}
         self._settings: Settings = Settings()
+        self._gcal_sync: CalendarSyncState = CalendarSyncState()
         self._jobs: dict[str, DeliveryJob] = {}
         self._logs: list[DeliveryLog] = []
         self._escalations: dict[str, Escalation] = {}
@@ -212,6 +216,12 @@ class InMemoryRepository:
 
     def save_settings(self, settings: Settings) -> None:
         self._settings = settings.model_copy(deep=True)
+
+    def get_gcal_sync_state(self) -> CalendarSyncState:
+        return self._gcal_sync.model_copy(deep=True)
+
+    def save_gcal_sync_state(self, state: CalendarSyncState) -> None:
+        self._gcal_sync = state.model_copy(deep=True)
 
     # --- delivery ---
     def save_delivery_job(self, job: DeliveryJob) -> None:

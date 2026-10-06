@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from . import gcal, line_push
 from .attendance import aggregate, record_attendance
 from .audit import write_audit
+from .calendar_import import pull_changes
 from .calendar_sync import push_event, retry_pending, touches_calendar
 from .delivery import execute_delivery
 from .deps import get_repo
@@ -246,15 +247,29 @@ def gcal_backfill():
     return retry_pending(get_repo(), datetime.now())
 
 
+@router.post("/gcal/pull")
+def gcal_pull():
+    """カレンダーの差分を今すぐ取り込む（通常は毎時の tick で自動実行）。"""
+    if not gcal.is_configured():
+        raise HTTPException(
+            status_code=503, detail="カレンダー連携が未設定です（GCAL_CALENDAR_ID）。"
+        )
+    return pull_changes(get_repo(), datetime.now())
+
+
 @router.get("/gcal/status")
 def gcal_status():
     """カレンダー連携の状態（有効/無効・未反映件数・直近エラー）。"""
-    events = get_repo().list_events()
+    repo = get_repo()
+    events = repo.list_events()
     unsynced = [e for e in events if e.gcal_sync_state != GcalSyncState.synced]
     errors = [e for e in events if e.gcal_sync_state == GcalSyncState.error]
+    pull = repo.get_gcal_sync_state()
     return {
         "enabled": gcal.is_configured(),
         "calendar_id": gcal.calendar_id(),
+        "last_pulled_at": pull.last_pulled_at,
+        "pull_error": pull.last_error,
         "unsynced": len(unsynced),
         "errors": [
             {"event_id": e.event_id, "title": e.title, "error": e.gcal_error} for e in errors[:10]
