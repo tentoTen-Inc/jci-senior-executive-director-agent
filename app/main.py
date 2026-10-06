@@ -37,6 +37,7 @@ from linebot.v3.webhooks import (
 from . import config, gmail, line_push
 from .admin_api import router as admin_router
 from .calendar_import import pull_changes
+from .calendar_intent import ACTION_CAL, handle_calendar_postback
 from .calendar_sync import retry_pending
 from .delivery import execute_delivery
 from .deps import get_repo
@@ -288,6 +289,8 @@ def handle_postback(user_id: str, data: str) -> list[Message]:
         return [TextMessage(text="先に招待コードで登録をお願いします。")]
     if data.startswith("menu|"):
         return handle_member_text(repo, member, data, now=datetime.now())
+    if data.startswith(f"{ACTION_CAL}|"):
+        return handle_calendar_postback(repo, member, data, now=datetime.now())
     if data.startswith(f"{ACTION_NOTICE_DONE}|"):
         return handle_done_postback(repo, member.member_id, data)
     return apply_postback(repo, member, data, now=datetime.now())

@@ -18,6 +18,7 @@ from linebot.v3.messaging import (
 
 from .assistant import answer_member_question
 from .attendance_intent import try_attendance_intent
+from .calendar_intent import try_calendar_intent
 from .events import resolve_targets
 from .line_messages import build_attendance_request
 from .models import (
@@ -124,6 +125,11 @@ def handle_member_text(
     # postback の "menu|<label>" も同じ値で扱えるよう正規化
     if t.startswith("menu|"):
         t = t.split("|", 1)[1]
+    else:
+        # 役員の「理事会を登録して」等は「予定」キーワード（次回予定の表示）より先に判定する
+        calendar = try_calendar_intent(repo, member, t, now=now)
+        if calendar is not None:
+            return calendar
 
     if any(k in t for k in ("予定", "次回", "いつ")):
         return [next_schedule_message(repo, now)]
