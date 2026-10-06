@@ -24,6 +24,7 @@ from linebot.v3.messaging import (
 from .audit import write_audit
 from .calendar_sync import calendar_title, push_event
 from .inference import record_inference
+from .jpdate import month_day_time
 from .llm import CalendarIntent, model_name, parse_calendar_intent
 from .models import (
     CalendarOpFields,
@@ -59,7 +60,6 @@ HELP_TEXT = (
 )
 PAST_TEXT = "過去の日時になっています。日付をもう一度お知らせください。"
 END_BEFORE_START_TEXT = "終了が開始より前になっています。時刻をもう一度お知らせください。"
-_WEEKDAYS = "月火水木金土日"
 
 
 # --------------------------------------------------------------------------- #
@@ -95,7 +95,7 @@ def _events_text(events: list[Event]) -> str:
 # 表示
 # --------------------------------------------------------------------------- #
 def _when(start: datetime, end: datetime | None) -> str:
-    text = f"{start.month}月{start.day}日({_WEEKDAYS[start.weekday()]}) {start:%H:%M}"
+    text = month_day_time(start)
     if end:
         text += f"〜{end:%H:%M}" if end.date() == start.date() else f"〜{end:%-m/%-d %H:%M}"
     return text

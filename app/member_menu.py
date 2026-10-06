@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from linebot.v3.messaging import (
     Message,
@@ -20,6 +20,7 @@ from .assistant import answer_member_question
 from .attendance_intent import try_attendance_intent
 from .calendar_intent import try_calendar_intent
 from .events import resolve_targets
+from .jpdate import month_day_time
 from .line_messages import build_attendance_request
 from .models import (
     AttendanceStatus,
@@ -51,18 +52,24 @@ def build_menu(prompt: str = "ご用件をお選びください。") -> TextMess
 
 
 def _fmt_dt(dt: datetime) -> str:
-    return dt.strftime("%-m月%-d日(%a) %H:%M")
+    return month_day_time(dt)
+
+
+#: 終了時刻が未設定のイベントは、開始からこの時間までを「開催中」とみなす
+DEFAULT_DURATION = timedelta(hours=2)
 
 
 def _upcoming_events(repo: Repository, now: datetime) -> list[Event]:
-    events = repo.list_events(status=EventStatus.open)
-    future = [e for e in events if e.datetime_start >= now]
-    future.sort(key=lambda e: e.datetime_start)
-    if future:
-        return future
-    # 未来が無ければ開催日時の新しい順
-    events.sort(key=lambda e: e.datetime_start, reverse=True)
-    return events
+    """これから開催（開催中を含む）の受付中イベントを開催順に返す。
+
+    過去のイベントは返さない。以前は未来が無いと過去を新しい順に返しており、
+    「次回以降の予定」に終わった会議が出たり、過去のイベントの出欠回答を促したりしていた。
+    """
+    events = [
+        e for e in repo.list_events(status=EventStatus.open)
+        if (e.datetime_end or e.datetime_start + DEFAULT_DURATION) >= now
+    ]
+    return sorted(events, key=lambda e: e.datetime_start)
 
 
 def _is_target(repo: Repository, event: Event, member: Member) -> bool:
