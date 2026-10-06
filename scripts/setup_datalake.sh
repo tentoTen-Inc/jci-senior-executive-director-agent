@@ -4,7 +4,7 @@
 #
 #   LINE → Webhook(jci-sed-agent) → Pub/Sub(line-events)
 #            ├ BigQuery サブスクリプション → line_lake.events_raw（コード不要）
-#            └ （P6-2）Push サブスクリプション → ワーカー → Cloud Storage
+#            └ Push サブスクリプション → ワーカー(/pubsub/line-worker) → Cloud Storage
 #
 # 前提: gcloud / bq がプロジェクトのオーナー相当で認証済み。
 #       案件ごとの認証分離のため、このリポジトリ直下で direnv 有効な状態で実行すること。
@@ -17,6 +17,11 @@ DATASET="${LAKE_DATASET:-line_lake}"
 TOPIC="${LINE_EVENTS_TOPIC_NAME:-line-events}"
 DLQ="${TOPIC}-dlq"
 BQ_SUB="${TOPIC}-to-bq"
+WORKER_SUB="${TOPIC}-worker"
+BUCKET="${LINE_CONTENT_BUCKET:-${PROJECT}-line-content}"
+SERVICE="${AGENT_SERVICE:-jci-sed-agent}"
+PUSH_SA_ID="pubsub-push"
+PUSH_SA="${PUSH_SA_ID}@${PROJECT}.iam.gserviceaccount.com"
 RETENTION_DAYS="${LAKE_RETENTION_DAYS:-1825}"  # 生イベントの保存期間（既定5年）
 RUNTIME_SA="app-runtime@${PROJECT}.iam.gserviceaccount.com"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -28,7 +33,8 @@ echo ">> project=${PROJECT} dataset=${DATASET} topic=${TOPIC} retention=${RETENT
 
 echo ">> API を有効化"
 gcloud services enable pubsub.googleapis.com bigquery.googleapis.com \
-  bigquerystorage.googleapis.com --project "${PROJECT}"
+  bigquerystorage.googleapis.com storage.googleapis.com iamcredentials.googleapis.com \
+  --project "${PROJECT}"
 
 # --------------------------------------------------------------------------- #
 # Pub/Sub トピック（7日保持＝障害時のリプレイ用）
@@ -113,9 +119,86 @@ gcloud pubsub subscriptions add-iam-policy-binding "${BQ_SUB}" \
   --member "serviceAccount:${PUBSUB_AGENT}" --role roles/pubsub.subscriber \
   --project "${PROJECT}" >/dev/null
 
+# --------------------------------------------------------------------------- #
+# ファイル置き場（Cloud Storage）: 公開禁止・均一アクセス・保管クラスの自動移行
+# --------------------------------------------------------------------------- #
+if ! gcloud storage buckets describe "gs://${BUCKET}" --project "${PROJECT}" >/dev/null 2>&1; then
+  gcloud storage buckets create "gs://${BUCKET}" --project "${PROJECT}" --location "${REGION}" \
+    --uniform-bucket-level-access --public-access-prevention
+else
+  echo "   既に存在: bucket ${BUCKET}"
+fi
+LIFECYCLE="$(mktemp)"
+trap 'rm -f "${LIFECYCLE}"' EXIT
+cat > "${LIFECYCLE}" <<JSON
+{"rule": [
+  {"action": {"type": "SetStorageClass", "storageClass": "NEARLINE"},
+   "condition": {"age": 90, "matchesStorageClass": ["STANDARD"]}},
+  {"action": {"type": "SetStorageClass", "storageClass": "COLDLINE"},
+   "condition": {"age": 365, "matchesStorageClass": ["NEARLINE"]}},
+  {"action": {"type": "Delete"}, "condition": {"age": ${RETENTION_DAYS}}}
+]}
+JSON
+gcloud storage buckets update "gs://${BUCKET}" --lifecycle-file="${LIFECYCLE}" \
+  --project "${PROJECT}" >/dev/null
+gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
+  --member "serviceAccount:${RUNTIME_SA}" --role roles/storage.objectAdmin \
+  --project "${PROJECT}" >/dev/null
+
+# --------------------------------------------------------------------------- #
+# ワーカー: 送信取消の本文消去（tick）用の BigQuery 権限
+# --------------------------------------------------------------------------- #
+bq --project_id="${PROJECT}" add-iam-policy-binding \
+  --member="serviceAccount:${RUNTIME_SA}" --role=roles/bigquery.dataEditor \
+  "${PROJECT}:${DATASET}.events_raw" >/dev/null
+gcloud projects add-iam-policy-binding "${PROJECT}" \
+  --member "serviceAccount:${RUNTIME_SA}" --role roles/bigquery.jobUser \
+  --condition=None --quiet >/dev/null
+
+# --------------------------------------------------------------------------- #
+# Push の認証用 SA（Pub/Sub がこの SA の OIDC トークンを付けてワーカーを呼ぶ）
+# --------------------------------------------------------------------------- #
+if ! gcloud iam service-accounts describe "${PUSH_SA}" --project "${PROJECT}" >/dev/null 2>&1; then
+  gcloud iam service-accounts create "${PUSH_SA_ID}" \
+    --display-name "Pub/Sub push (OIDC token issuer)" --project "${PROJECT}"
+fi
+gcloud iam service-accounts add-iam-policy-binding "${PUSH_SA}" \
+  --member "serviceAccount:${PUBSUB_AGENT}" --role roles/iam.serviceAccountTokenCreator \
+  --project "${PROJECT}" >/dev/null
+
+# --------------------------------------------------------------------------- #
+# ワーカーの設定（Push サブスクリプションより先に入れる。未設定の間は 503 で再送させる）
+# --------------------------------------------------------------------------- #
+AGENT_URL="$(gcloud run services describe "${SERVICE}" --region "${REGION}" \
+  --project "${PROJECT}" --format='value(status.url)')"
+ENDPOINT="${AGENT_URL}/pubsub/line-worker"
+echo ">> ${SERVICE} にワーカー設定を反映（既存の環境変数は保持）"
+gcloud run services update "${SERVICE}" --region "${REGION}" --project "${PROJECT}" \
+  --update-env-vars "LINE_CONTENT_BUCKET=${BUCKET},PUBSUB_PUSH_SA=${PUSH_SA},PUBSUB_PUSH_AUDIENCE=${ENDPOINT}" \
+  --quiet >/dev/null
+
+if ! gcloud pubsub subscriptions describe "${WORKER_SUB}" --project "${PROJECT}" >/dev/null 2>&1; then
+  gcloud pubsub subscriptions create "${WORKER_SUB}" \
+    --topic "${TOPIC}" \
+    --message-filter 'attributes.kind = "webhook"' \
+    --push-endpoint "${ENDPOINT}" \
+    --push-auth-service-account "${PUSH_SA}" \
+    --push-auth-token-audience "${ENDPOINT}" \
+    --ack-deadline 120 \
+    --min-retry-delay 10s --max-retry-delay 600s \
+    --dead-letter-topic "${DLQ}" --max-delivery-attempts 5 \
+    --expiration-period=never \
+    --project "${PROJECT}"
+else
+  echo "   既に存在: subscription ${WORKER_SUB}"
+fi
+gcloud pubsub subscriptions add-iam-policy-binding "${WORKER_SUB}" \
+  --member "serviceAccount:${PUBSUB_AGENT}" --role roles/pubsub.subscriber \
+  --project "${PROJECT}" >/dev/null
+
 cat <<EOF
 
-データレイク（取込部分）の準備が完了しました。
+データレイクの準備が完了しました（ファイル置き場: gs://${BUCKET}）。
 
 次に Webhook からの取込を有効化します（既存の設定は保持されます）:
 

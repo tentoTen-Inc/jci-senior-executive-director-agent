@@ -205,6 +205,18 @@ class Event(BaseModel):
     gcal_error: str | None = None
 
 
+class LineGroup(BaseModel):
+    """ボットが参加しているグループ・複数人トーク（docs/datalake-design.md §3.5）。"""
+
+    group_id: str
+    source_type: str = "group"  # group | room
+    group_name: str | None = None
+    picture_url: str | None = None
+    joined_at: datetime | None = None
+    left_at: datetime | None = None
+    profile_at: datetime | None = None  # 最後にグループ名を取得した時刻
+
+
 class CalendarSyncState(BaseModel):
     """カレンダー→システム差分取込の状態（シングルトン, docs/calendar-design.md §3.3）。"""
 

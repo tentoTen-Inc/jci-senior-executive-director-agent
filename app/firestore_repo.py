@@ -20,6 +20,7 @@ from .models import (
     ExternalNotice,
     InferenceLog,
     InviteCode,
+    LineGroup,
     LinkState,
     Member,
     MemberStatus,
@@ -40,6 +41,7 @@ COL_ATTENDANCES = "attendances"
 COL_POLICIES = "reminderPolicies"
 COL_SETTINGS = "settings"
 COL_CALENDAR_OPS = "calendarOps"
+COL_LINE_GROUPS = "lineGroups"
 COL_JOBS = "deliveryJobs"
 COL_LOGS = "deliveryLogs"
 COL_ESCALATIONS = "escalations"
@@ -171,6 +173,21 @@ class FirestoreRepository:
     def get_calendar_op(self, op_id: str) -> PendingCalendarOp | None:
         snap = self._db.collection(COL_CALENDAR_OPS).document(op_id).get()
         return PendingCalendarOp.model_validate(snap.to_dict()) if snap.exists else None
+
+    def save_line_group(self, group: LineGroup) -> None:
+        self._db.collection(COL_LINE_GROUPS).document(group.group_id).set(
+            group.model_dump(mode="json")
+        )
+
+    def get_line_group(self, group_id: str) -> LineGroup | None:
+        snap = self._db.collection(COL_LINE_GROUPS).document(group_id).get()
+        return LineGroup.model_validate(snap.to_dict()) if snap.exists else None
+
+    def list_line_groups(self) -> list[LineGroup]:
+        return [
+            LineGroup.model_validate(d.to_dict())
+            for d in self._db.collection(COL_LINE_GROUPS).stream()
+        ]
 
     # --- delivery ---
     def save_delivery_job(self, job: DeliveryJob) -> None:
