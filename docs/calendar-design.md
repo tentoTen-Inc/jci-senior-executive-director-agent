@@ -53,8 +53,8 @@ Cloud Run (app-runtime SA) ──impersonate──► calendar-sync SA ──Cal
   鍵も持たないため。
 - 制約: SA からは**招待メールを送れない**（ドメイン全体委任が必要なため）。会員への周知は従来どおり LINE で行う。
   予定の登録・更新・削除・差分取得は問題なく行える。
-- 環境変数: `GCAL_CALENDAR_ID`（既定 `inawashiro.jc@gmail.com`）、`GCAL_SYNC_SA`（既定 上記SA）。
-  `GCAL_CALENDAR_ID` が空なら連携は無効（従来どおり動く）。
+- 環境変数: `GCAL_CALENDAR_ID`（本番は `inawashiro.jc@gmail.com`）、`GCAL_SYNC_SA`（既定 上記SA）。
+  `GCAL_CALENDAR_ID` が未設定なら連携は無効（従来どおり動く）。SA作成とカレンダー共有が済んでから設定する。
 
 ---
 
@@ -171,6 +171,7 @@ tick に相乗りし、`events.list(syncToken=…)` で差分だけを取る。�
    設定 → 対象カレンダー → 「特定のユーザーまたはグループと共有する」に
    `calendar-sync@jci-sed-agent.iam.gserviceaccount.com` を **「予定の変更」** 権限で追加する。
 3. **Cloud Run の環境変数**: `GCAL_CALENDAR_ID=inawashiro.jc@gmail.com` を両サービスに設定する（未設定なら連携は無効のまま）。
+   CD（`deploy.yml`）は `--update-env-vars` なので、手動で設定した値はデプロイ後も保持される。
 4. 既存イベントの初回反映: P5-1 デプロイ後、管理画面の「カレンダーに再同期」または `POST /api/gcal/backfill` で、
    これから開催されるイベントをまとめてカレンダーに登録する。
 
