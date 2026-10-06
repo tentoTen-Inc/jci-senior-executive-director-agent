@@ -15,7 +15,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from . import config
+from . import config, jpdate
 from .models import InferenceUsage, LlmReview, NoticeDigest, SurveyDigest, SurveyTheme
 
 logger = logging.getLogger("jci-agent.llm")
@@ -392,8 +392,7 @@ def parse_calendar_intent(text: str, events: str, now: datetime) -> CalendarInte
     if not text or not text.strip():
         return None
     model, project, location = _target()
-    weekday = "月火水木金土日"[now.weekday()]
-    today = now.strftime(f"%Y-%m-%d({weekday}) %H:%M")
+    today = now.strftime(f"%Y-%m-%d({jpdate.weekday(now)}) %H:%M")
     try:
         gen = generate_calendar_intent(
             text, events or "(なし)", today, model=model, project=project, location=location
