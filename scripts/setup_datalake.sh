@@ -154,6 +154,13 @@ bq --project_id="${PROJECT}" add-iam-policy-binding \
 gcloud projects add-iam-policy-binding "${PROJECT}" \
   --member "serviceAccount:${RUNTIME_SA}" --role roles/bigquery.jobUser \
   --condition=None --quiet >/dev/null
+# 管理画面「LINEグループ」がビューを読める（ビュー単位の最小権限）
+for f in "${ROOT}"/infra/bigquery/views/*.sql; do
+  view="$(sed -n 's/.*\.\(v_[a-z_]*\)`.*/\1/p' "${f}" | head -1)"
+  bq --project_id="${PROJECT}" add-iam-policy-binding \
+    --member="serviceAccount:${RUNTIME_SA}" --role=roles/bigquery.dataViewer \
+    "${PROJECT}:${DATASET}.${view}" >/dev/null
+done
 
 # --------------------------------------------------------------------------- #
 # Push の認証用 SA（Pub/Sub がこの SA の OIDC トークンを付けてワーカーを呼ぶ）
@@ -200,9 +207,12 @@ cat <<EOF
 
 データレイクの準備が完了しました（ファイル置き場: gs://${BUCKET}）。
 
-次に Webhook からの取込を有効化します（既存の設定は保持されます）:
+最後に、取込を開始します（各グループへの周知のあとに実行。既存の設定は保持されます）。
+受信イベントは agent、管理画面から送るお知らせ等の記録と閲覧は admin で使うため両方に設定します:
 
   gcloud run services update jci-sed-agent --region ${REGION} --project ${PROJECT} \\
+    --update-env-vars LINE_EVENTS_TOPIC=${TOPIC}
+  gcloud run services update jci-sed-admin --region ${REGION} --project ${PROJECT} \\
     --update-env-vars LINE_EVENTS_TOPIC=${TOPIC}
 
 確認（数分後）:

@@ -165,3 +165,32 @@ def ingest_webhook(body: str) -> None:
         logger.exception("Webhook 本文の解析に失敗しました（取込スキップ）")
         return
     publish(envelopes)
+
+
+# --------------------------------------------------------------------------- #
+# ボットの送信の記録（docs/datalake-design.md §4.3）
+# --------------------------------------------------------------------------- #
+def _message_dict(message) -> dict:
+    if isinstance(message, dict):
+        return message
+    try:
+        return message.to_dict()
+    except Exception:  # noqa: BLE001 - 記録用。形が変でも送信は止めない
+        return {"type": getattr(message, "type", None), "repr": repr(message)[:500]}
+
+
+def record_outbound(channel: str, messages: list, *, reply_token: str | None = None,
+                    to: str | None = None) -> None:
+    """ボットが送ったメッセージを記録する（reply は replyToken で受信イベントと突き合わせる）。"""
+    if not is_enabled() or not messages:
+        return
+    try:
+        payload = {
+            "channel": channel,
+            "reply_token": reply_token,
+            "to": to,
+            "messages": [_message_dict(m) for m in messages],
+        }
+        publish([envelope(KIND_OUTBOUND, payload)])
+    except Exception:  # noqa: BLE001 - 記録の失敗で送信処理を止めない
+        logger.exception("送信メッセージの記録に失敗しました")
