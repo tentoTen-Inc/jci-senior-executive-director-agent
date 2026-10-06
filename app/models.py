@@ -213,6 +213,32 @@ class CalendarSyncState(BaseModel):
     last_error: str | None = None
 
 
+class CalendarOpFields(BaseModel):
+    """LINE で解釈した予定の中身（作成・変更する項目だけ埋まる）。"""
+
+    type: EventType | None = None
+    title: str | None = None
+    datetime_start: datetime | None = None
+    datetime_end: datetime | None = None
+    location: str | None = None
+
+
+class PendingCalendarOp(BaseModel):
+    """LINE で確認待ちの予定操作（docs/calendar-design.md §3.4 / §5.2）。
+
+    本人が「はい」を押したときだけ反映する。30分で失効する。
+    """
+
+    op_id: str
+    member_id: str
+    action: str  # create | update | cancel
+    event_id: str | None = None
+    fields: CalendarOpFields = Field(default_factory=CalendarOpFields)
+    created_at: datetime
+    expires_at: datetime
+    status: str = "pending"  # pending | done | declined | expired
+
+
 class Attendance(BaseModel):
     event_id: str
     member_id: str

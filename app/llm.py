@@ -78,6 +78,44 @@ _INTENT_PROMPT = """会員のメッセージから、どのイベントの出欠
 # 出力(JSONのみ)
 """
 
+_CALENDAR_PROMPT = """あなたは青年会議所(JC)の予定管理アシスタントです。
+役員のメッセージから、予定(例会・理事会など)を登録・変更・中止したいのかを読み取り、JSONで出力してください。
+
+今日: {today}
+
+厳守事項:
+- action は create(新規登録) / update(既存の変更) / cancel(既存の中止) のいずれか。
+  予定の操作ではない(出欠の回答・質問・雑談など)なら null。
+- update / cancel の event_id は「既存の予定」のIDから選ぶ。
+  特定できなければ null にして confident=false。
+- 日時は "YYYY-MM-DDTHH:MM"(24時間)。「来週火曜」等は今日を基準に解決する。
+  年が無ければ今日以降で最も近い日。
+- type は 例会 / 理事会 / 五役会 / 委員会 / 総会 / イベント のいずれか。読み取れなければ null。
+- update では変更したい項目だけを埋め、他は null。
+- 必須項目(create は開始日時と 種別かタイトル)が欠ける、または解釈が曖昧なら confident=false にし、
+  question に聞き返す一文(敬体)を入れる。
+- メッセージに無い事実を作らない。
+
+出力JSON:
+- action: create | update | cancel | null
+- event_id: 対象の既存予定ID(または null)
+- type: 種別(または null)
+- title: 予定名(または null。種別そのものなら null でよい)
+- start: 開始日時(または null)
+- end: 終了日時(または null)
+- location: 場所(または null)
+- confident: 明確に読み取れたか(true/false)
+- question: 聞き返す文(不要なら null)
+
+# 既存の予定(これから開催)
+{events}
+
+# 役員のメッセージ
+{text}
+
+# 出力(JSONのみ)
+"""
+
 _SURVEY_PROMPT = """あなたは青年会議所(JC)の専務理事を補佐するアシスタントです。
 例会アンケートの自由記述を分析し、JSONで出力してください。
 
@@ -307,6 +345,75 @@ def parse_attendance_intent(text: str, events: str) -> IntentOutcome | None:
         logger.exception("出欠意図の解釈に失敗しました")
         return None
     return IntentOutcome(
+        intent=intent,
+        usage=InferenceUsage(
+            model=model,
+            input_tokens=gen.input_tokens,
+            output_tokens=gen.output_tokens,
+        ),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 自然文からの予定操作の解釈（F3-2 / docs/calendar-design.md §5.2）
+# --------------------------------------------------------------------------- #
+class CalendarIntent(BaseModel):
+    action: str | None = None  # create | update | cancel
+    event_id: str | None = None
+    type: str | None = None
+    title: str | None = None
+    start: str | None = None  # "YYYY-MM-DDTHH:MM"
+    end: str | None = None
+    location: str | None = None
+    confident: bool = False
+    question: str | None = None
+
+
+class CalendarIntentOutcome(BaseModel):
+    intent: CalendarIntent
+    usage: InferenceUsage
+
+
+def generate_calendar_intent(
+    text: str, events: str, today: str, *, model: str, project: str, location: str
+) -> Generation:
+    """予定操作の解釈（テストでモックする境界）。"""
+    prompt = _CALENDAR_PROMPT.format(text=text, events=events, today=today)
+    return _call_gemini(prompt, model=model, project=project, location=location)
+
+
+def _opt_str(value) -> str | None:
+    text = str(value).strip() if value is not None else ""
+    return text or None
+
+
+def parse_calendar_intent(text: str, events: str, now: datetime) -> CalendarIntentOutcome | None:
+    """自然文から予定の登録・変更・中止の意図を推定する。失敗時は None。"""
+    if not text or not text.strip():
+        return None
+    model, project, location = _target()
+    weekday = "月火水木金土日"[now.weekday()]
+    today = now.strftime(f"%Y-%m-%d({weekday}) %H:%M")
+    try:
+        gen = generate_calendar_intent(
+            text, events or "(なし)", today, model=model, project=project, location=location
+        )
+        data = json.loads(gen.text)
+        intent = CalendarIntent(
+            action=_opt_str(data.get("action")),
+            event_id=_opt_str(data.get("event_id")),
+            type=_opt_str(data.get("type")),
+            title=_opt_str(data.get("title")),
+            start=_opt_str(data.get("start")),
+            end=_opt_str(data.get("end")),
+            location=_opt_str(data.get("location")),
+            confident=bool(data.get("confident", False)),
+            question=_opt_str(data.get("question")),
+        )
+    except Exception:  # noqa: BLE001 - LLM未設定/失敗でも本処理は止めない
+        logger.exception("予定操作の解釈に失敗しました")
+        return None
+    return CalendarIntentOutcome(
         intent=intent,
         usage=InferenceUsage(
             model=model,

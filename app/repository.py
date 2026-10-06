@@ -25,6 +25,7 @@ from .models import (
     Member,
     MemberStatus,
     NoticeAction,
+    PendingCalendarOp,
     Proposal,
     ReminderPolicy,
     Settings,
@@ -65,6 +66,8 @@ class Repository(Protocol):
     def save_settings(self, settings: Settings) -> None: ...
     def get_gcal_sync_state(self) -> CalendarSyncState: ...
     def save_gcal_sync_state(self, state: CalendarSyncState) -> None: ...
+    def save_calendar_op(self, op: PendingCalendarOp) -> None: ...
+    def get_calendar_op(self, op_id: str) -> PendingCalendarOp | None: ...
 
     # --- delivery ---
     def save_delivery_job(self, job: DeliveryJob) -> None: ...
@@ -124,6 +127,7 @@ class InMemoryRepository:
         self._policies: dict[str, ReminderPolicy] = {}
         self._settings: Settings = Settings()
         self._gcal_sync: CalendarSyncState = CalendarSyncState()
+        self._calendar_ops: dict[str, PendingCalendarOp] = {}
         self._jobs: dict[str, DeliveryJob] = {}
         self._logs: list[DeliveryLog] = []
         self._escalations: dict[str, Escalation] = {}
@@ -222,6 +226,13 @@ class InMemoryRepository:
 
     def save_gcal_sync_state(self, state: CalendarSyncState) -> None:
         self._gcal_sync = state.model_copy(deep=True)
+
+    def save_calendar_op(self, op: PendingCalendarOp) -> None:
+        self._calendar_ops[op.op_id] = op.model_copy(deep=True)
+
+    def get_calendar_op(self, op_id: str) -> PendingCalendarOp | None:
+        op = self._calendar_ops.get(op_id)
+        return op.model_copy(deep=True) if op else None
 
     # --- delivery ---
     def save_delivery_job(self, job: DeliveryJob) -> None:

@@ -24,6 +24,7 @@ from .models import (
     Member,
     MemberStatus,
     NoticeAction,
+    PendingCalendarOp,
     Proposal,
     ReminderPolicy,
     Settings,
@@ -38,6 +39,7 @@ COL_EVENTS = "events"
 COL_ATTENDANCES = "attendances"
 COL_POLICIES = "reminderPolicies"
 COL_SETTINGS = "settings"
+COL_CALENDAR_OPS = "calendarOps"
 COL_JOBS = "deliveryJobs"
 COL_LOGS = "deliveryLogs"
 COL_ESCALATIONS = "escalations"
@@ -162,6 +164,13 @@ class FirestoreRepository:
         self._db.collection(COL_SETTINGS).document(GCAL_SYNC_DOC).set(
             state.model_dump(mode="json")
         )
+
+    def save_calendar_op(self, op: PendingCalendarOp) -> None:
+        self._db.collection(COL_CALENDAR_OPS).document(op.op_id).set(op.model_dump(mode="json"))
+
+    def get_calendar_op(self, op_id: str) -> PendingCalendarOp | None:
+        snap = self._db.collection(COL_CALENDAR_OPS).document(op_id).get()
+        return PendingCalendarOp.model_validate(snap.to_dict()) if snap.exists else None
 
     # --- delivery ---
     def save_delivery_job(self, job: DeliveryJob) -> None:
