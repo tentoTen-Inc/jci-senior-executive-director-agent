@@ -38,6 +38,7 @@ app/
   lake_query.py    # データレイク(BigQuery)の読み取り(パラメータ化クエリ)
   lake_api.py      # 管理画面「LINEグループ」API(グループ・会話・ファイル)
   lake_knowledge.py # LINEの資料・やり取りの索引と検索(RAG, BigQuery ML)
+  ai_feedback.py   # AI回答の記録と👍👎評価
   jpdate.py        # 日本語の日付表記(曜日)
   config.py        # 環境/シークレット解決
 scripts/import_roster.py  # 会員名簿xlsxの正規化インポート

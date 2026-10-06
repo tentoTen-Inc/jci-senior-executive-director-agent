@@ -118,3 +118,74 @@ def download_line_file(message_id: str):
     disposition = f"attachment; filename*=UTF-8''{urllib.parse.quote(filename)}"
     return Response(content=raw, media_type=content_type,
                     headers={"Content-Disposition": disposition})
+
+
+# --------------------------------------------------------------------------- #
+# AI 応答の振り返り（docs/lake-ai-design.md §5 / P6-4b）
+# --------------------------------------------------------------------------- #
+AI_FILTERS = {
+    "down": "rating = 'down'",
+    "up": "rating = 'up'",
+    "unrated": "rating IS NULL",
+    "ungrounded": "NOT grounded",
+    "escalated": "needs_human",
+}
+
+
+@router.get("/ai/answers")
+def ai_answers(filter: str | None = None, limit: int = 100):
+    """AI の回答一覧（新しい順）。filter: down / up / unrated / ungrounded / escalated。"""
+    if filter is not None and filter not in AI_FILTERS:
+        raise HTTPException(status_code=400, detail=f"filter は {', '.join(AI_FILTERS)} のいずれか")
+    clause = f"WHERE {AI_FILTERS[filter]}" if filter else ""
+    return _run(
+        f"SELECT * FROM {_view('v_ai_answers')} {clause} ORDER BY answered_at DESC LIMIT @limit",
+        {"limit": _limit(limit)},
+    )
+
+
+@router.get("/ai/summary")
+def ai_summary():
+    """回答数・評価の内訳・根拠なし・取次の件数（直近30日）。"""
+    rows = _run(
+        f"""
+SELECT
+  COUNT(*) AS answers,
+  COUNTIF(rating = 'up') AS up,
+  COUNTIF(rating = 'down') AS down,
+  COUNTIF(rating IS NULL) AS unrated,
+  COUNTIF(NOT grounded) AS ungrounded,
+  COUNTIF(needs_human) AS escalated,
+  COUNTIF(source_count > 0) AS used_line_sources
+FROM {_view('v_ai_answers')}
+WHERE answered_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
+""".strip()
+    )
+    return rows[0] if rows else {}
+
+
+EXPORT_COLUMNS = [
+    "answered_at", "question", "answer", "rating", "grounded", "needs_human",
+    "source_count", "sources", "model", "input_tokens", "output_tokens", "answer_id",
+]
+
+
+@router.get("/ai/answers.csv")
+def ai_answers_csv():
+    """評価データの CSV（プロンプト改善・モデル評価用）。Excel で開けるよう BOM 付き UTF-8。"""
+    import csv
+    import io
+
+    rows = _run(
+        f"SELECT {', '.join(EXPORT_COLUMNS)} FROM {_view('v_ai_answers')} "
+        "ORDER BY answered_at DESC LIMIT 5000"
+    )
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=EXPORT_COLUMNS, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
+    return Response(
+        content="﻿" + buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=ai_answers.csv"},
+    )
