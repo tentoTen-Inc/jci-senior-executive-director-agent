@@ -19,6 +19,7 @@ SELECT
   JSON_VALUE(e.data, '$.payload.message.fileName') AS file_name,
   SAFE_CAST(JSON_VALUE(e.data, '$.payload.message.fileSize') AS INT64) AS file_size,
   JSON_VALUE(e.data, '$.payload.message.quotedMessageId') AS quoted_message_id,
+  JSON_VALUE(e.data, '$.payload.replyToken') AS reply_token,
   JSON_VALUE(e.data, '$.payload.message.packageId') AS sticker_package_id,
   JSON_VALUE(e.data, '$.payload.message.stickerId') AS sticker_id,
   EXISTS (

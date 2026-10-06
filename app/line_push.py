@@ -16,7 +16,7 @@ from linebot.v3.messaging import (
     TextMessage,
 )
 
-from . import config
+from . import config, lake
 
 logger = logging.getLogger("jci-agent.push")
 
@@ -35,6 +35,7 @@ def push_messages(user_id: str, messages: list[Message]) -> bool:
         MessagingApi(api_client).push_message(
             PushMessageRequest(to=user_id, messages=messages)
         )
+    lake.record_outbound("push", messages, to=user_id)
     return True
 
 

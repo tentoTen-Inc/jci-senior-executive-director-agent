@@ -33,7 +33,7 @@ def _webhook(eid: str, payload: dict) -> dict:
 
 #: ビューの挙動を一通り通すサンプル（重複・メンション・ファイル・送信取消・参加・グループ名）
 SAMPLES = [
-    _webhook("e1", {"type": "message", "timestamp": 1791241200000,
+    _webhook("e1", {"type": "message", "timestamp": 1791241200000, "replyToken": "rt1",
                     "deliveryContext": {"isRedelivery": False},
                     "message": {"type": "text", "id": "m1", "text": "おはようございます",
                                 "mention": {"mentionees": [{"index": 0, "length": 3,
@@ -65,6 +65,12 @@ SAMPLES = [
                  "group_id": "G1", "user_id": "U2", "sent_at_ms": 1791241320000,
                  "file_name": "m3.jpg", "content_type": "image/jpeg", "size": 2048,
                  "gcs_uri": "gs://b/line/content/m3/m3.jpg"}},
+    {"v": 1, "id": "out1", "kind": "outbound", "received_at": "2026-10-06T12:00:01.000+09:00",
+     "payload": {"channel": "reply", "reply_token": "rt1", "to": None,
+                 "messages": [{"type": "text", "text": "おはようございます！"}]}},
+    {"v": 1, "id": "out2", "kind": "outbound", "received_at": "2026-10-06T18:00:00.000+09:00",
+     "payload": {"channel": "push", "reply_token": None, "to": "U9",
+                 "messages": [{"type": "text", "text": "出欠のご回答をお願いします"}]}},
 ]
 
 

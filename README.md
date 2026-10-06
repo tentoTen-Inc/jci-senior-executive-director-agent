@@ -35,6 +35,8 @@ app/
   lake.py          # LINEイベントのデータレイク取込(Webhook→Pub/Sub→BigQuery)
   line_worker.py   # データレイクのワーカー(ファイル取得→GCS・送信取消・グループ名)
   lake_maintenance.py # 送信取消の本文消去(tick)
+  lake_query.py    # データレイク(BigQuery)の読み取り(パラメータ化クエリ)
+  lake_api.py      # 管理画面「LINEグループ」API(グループ・会話・ファイル)
   config.py        # 環境/シークレット解決
 scripts/import_roster.py  # 会員名簿xlsxの正規化インポート
 scripts/setup_calendar_sync.sh  # カレンダー連携のGCPセットアップ(1回のみ)

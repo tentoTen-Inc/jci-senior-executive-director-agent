@@ -7,6 +7,7 @@ const nav = [
   { to: "/proposals", label: "議案" },
   { to: "/notices", label: "対外連絡" },
   { to: "/surveys", label: "アンケート" },
+  { to: "/line-groups", label: "LINEグループ" },
   { to: "/agent", label: "エージェントKPI" },
   { to: "/settings", label: "設定" },
 ];

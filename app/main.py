@@ -46,6 +46,7 @@ from .delivery import execute_delivery
 from .deps import get_repo
 from .gmail_import import import_gmail_notices
 from .invite import verify_and_link
+from .lake_api import router as lake_router
 from .lake_maintenance import redact_unsent
 from .line_messages import apply_postback, build_attendance_request
 from .member_menu import build_menu, handle_member_text
@@ -92,6 +93,7 @@ app.include_router(notices_router, prefix="/admin")
 app.include_router(notices_router, prefix="/api")
 app.include_router(surveys_router, prefix="/admin")
 app.include_router(surveys_router, prefix="/api")
+app.include_router(lake_router, prefix="/api")  # LINEグループ（データレイク）
 
 
 @app.get("/dashboard", include_in_schema=False)
@@ -169,6 +171,7 @@ def reply_messages(reply_token: str, messages: list[Message]) -> bool:
         MessagingApi(api_client).reply_message(
             ReplyMessageRequest(reply_token=reply_token, messages=messages)
         )
+    lake.record_outbound("reply", messages, reply_token=reply_token)
     return True
 
 
