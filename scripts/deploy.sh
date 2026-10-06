@@ -19,7 +19,7 @@ gcloud run deploy "${SERVICE}" \
   --project "${PROJECT}" \
   --service-account "${RUNTIME_SA}" \
   --set-secrets "LINE_CHANNEL_SECRET=line-channel-secret:latest,LINE_CHANNEL_ACCESS_TOKEN=line-channel-access-token:latest,ADMIN_API_SECRET=admin-api-secret:latest" \
-  --set-env-vars "GCP_PROJECT_ID=${PROJECT},TZ=Asia/Tokyo" \
+  --update-env-vars "GCP_PROJECT_ID=${PROJECT},TZ=Asia/Tokyo" \
   --allow-unauthenticated
 
 URL="$(gcloud run services describe "${SERVICE}" --region "${REGION}" --project "${PROJECT}" --format='value(status.url)')"

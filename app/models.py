@@ -67,6 +67,24 @@ class EventStatus(StrEnum):
     draft = "draft"
     open = "open"
     closed = "closed"
+    cancelled = "cancelled"  # 中止（出欠データは保持・再開可, docs/calendar-design.md §3.2）
+
+
+class EventOrigin(StrEnum):
+    """イベントがどこで作られたか（docs/calendar-design.md §3.1）。"""
+
+    system = "system"  # 管理画面・API
+    gcal = "gcal"  # Googleカレンダーから取込
+    line = "line"  # LINE の自然文（役員）
+
+
+class GcalSyncState(StrEnum):
+    """Googleカレンダーへの反映状態（docs/calendar-design.md §3.1）。"""
+
+    synced = "synced"
+    pending = "pending"  # 未反映（tick で再試行）
+    error = "error"  # 反映に失敗（tick で再試行・理由は gcal_error）
+    disabled = "disabled"  # 連携が無効（GCAL_CALENDAR_ID 未設定）
 
 
 class TargetScopeKind(StrEnum):
@@ -177,6 +195,14 @@ class Event(BaseModel):
     reminder_policy_id: str | None = None
     quorum: int | None = None  # 定足数（人数）。理事会等で判定に使う（F4-5）
     status: EventStatus = EventStatus.draft
+    origin: EventOrigin = EventOrigin.system
+    updated_at: datetime | None = None  # システム側の最終更新（カレンダーとの後勝ち判定に使う）
+    # --- Googleカレンダー連携（F3-2, docs/calendar-design.md §3.1）---
+    gcal_event_id: str | None = None
+    gcal_etag: str | None = None
+    gcal_sync_state: GcalSyncState = GcalSyncState.pending
+    gcal_synced_at: datetime | None = None
+    gcal_error: str | None = None
 
 
 class Attendance(BaseModel):

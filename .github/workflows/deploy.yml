@@ -69,6 +69,8 @@ jobs:
           provenance: false
 
       # 公開サービス（LINE Webhook / tick）。設定は scripts/deploy.sh と同一。
+      # 環境変数は --update-env-vars（マージ）にして、手動で足した設定
+      # （GCAL_CALENDAR_ID 等）がデプロイのたびに消えないようにする。
       - name: Deploy jci-sed-agent
         run: |
           gcloud run deploy jci-sed-agent \
@@ -77,7 +79,7 @@ jobs:
             --project "${PROJECT_ID}" \
             --service-account "${RUNTIME_SA}" \
             --set-secrets "LINE_CHANNEL_SECRET=line-channel-secret:latest,LINE_CHANNEL_ACCESS_TOKEN=line-channel-access-token:latest,ADMIN_API_SECRET=admin-api-secret:latest" \
-            --set-env-vars "GCP_PROJECT_ID=${PROJECT_ID},TZ=Asia/Tokyo" \
+            --update-env-vars "GCP_PROJECT_ID=${PROJECT_ID},TZ=Asia/Tokyo" \
             --allow-unauthenticated \
             --quiet
 

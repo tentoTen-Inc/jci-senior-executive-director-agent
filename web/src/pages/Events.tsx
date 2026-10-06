@@ -21,7 +21,46 @@ type EventRow = {
   target_scope: { kind: string; value: string[] };
   quorum: number | null;
   status: string;
+  origin?: string;
+  gcal_event_id?: string | null;
+  gcal_sync_state?: string;
+  gcal_error?: string | null;
 };
+
+type GcalStatus = {
+  enabled: boolean;
+  calendar_id: string | null;
+  unsynced: number;
+  errors: { event_id: string; title: string; error: string | null }[];
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  draft: "下書き",
+  open: "受付中",
+  closed: "終了",
+  cancelled: "中止",
+};
+
+/** カレンダー同期状態のバッジ（連携が無効なら出さない）。 */
+function GcalBadge({ e, enabled }: { e: EventRow; enabled: boolean }) {
+  if (!enabled) return null;
+  if (e.status === "cancelled") return null;
+  const state = e.gcal_sync_state ?? "pending";
+  if (state === "synced") {
+    return <span className="text-xs rounded px-1.5 py-0.5 bg-green-50 text-green-700">📅 同期済み</span>;
+  }
+  if (state === "error") {
+    return (
+      <span
+        className="text-xs rounded px-1.5 py-0.5 bg-red-50 text-red-600"
+        title={e.gcal_error ?? undefined}
+      >
+        📅 同期エラー
+      </span>
+    );
+  }
+  return <span className="text-xs rounded px-1.5 py-0.5 bg-amber-50 text-amber-700">📅 未同期</span>;
+}
 
 const EVENT_TYPES = ["例会", "理事会", "五役会", "委員会", "総会", "イベント"];
 const SCOPE_KINDS = [
@@ -64,6 +103,7 @@ export default function Events() {
   const [msg, setMsg] = useState<string | null>(null);
   const [edit, setEdit] = useState<EventRow | null>(null);
   const [creating, setCreating] = useState(false);
+  const [gcalStatus, setGcalStatus] = useState<GcalStatus | null>(null);
   const [draft, setDraft] = useState({
     type: "例会",
     title: "",
@@ -72,8 +112,13 @@ export default function Events() {
     quorum: "",
   });
 
-  useEffect(() => {
+  function reload() {
     api<EventRow[]>("/events").then(setEvents).catch((e) => setMsg(e.message));
+    api<GcalStatus>("/gcal/status").then(setGcalStatus).catch(() => {});
+  }
+
+  useEffect(() => {
+    reload();
     api<Member[]>("/members").then((ms) =>
       setNames(Object.fromEntries(ms.map((m) => [m.member_id, m.name])))
     );
@@ -137,7 +182,7 @@ export default function Events() {
       setMsg(`${draft.title} を登録しました。`);
       setDraft({ type: "例会", title: "", datetime_start: "", location: "", quorum: "" });
       setCreating(false);
-      api<EventRow[]>("/events").then(setEvents);
+      reload();
     } catch (e) {
       setMsg((e as Error).message);
     }
@@ -161,10 +206,56 @@ export default function Events() {
       });
       setMsg(`${edit.title} を更新しました。`);
       setEdit(null);
-      api<EventRow[]>("/events").then(setEvents);
+      reload();
       if (sel === edit.event_id) open(edit.event_id);
     } catch (e) {
       setMsg((e as Error).message);
+    }
+  }
+
+  async function cancelEvent(e: EventRow) {
+    if (!window.confirm(`「${e.title}」を中止にしますか？（出欠データは残り、あとで再開できます）`)) return;
+    try {
+      await api(`/events/${e.event_id}/cancel`, { method: "POST" });
+      setMsg(`${e.title} を中止にしました。`);
+      reload();
+    } catch (err) {
+      setMsg((err as Error).message);
+    }
+  }
+
+  async function restoreEvent(e: EventRow) {
+    try {
+      await api(`/events/${e.event_id}/restore`, {
+        method: "POST",
+        body: JSON.stringify({ status: "open" }),
+      });
+      setMsg(`${e.title} を再開しました（受付中）。`);
+      reload();
+    } catch (err) {
+      setMsg((err as Error).message);
+    }
+  }
+
+  async function resync(e: EventRow) {
+    const r = await api<EventRow>(`/events/${e.event_id}/gcal-sync`, { method: "POST" });
+    setMsg(
+      r.gcal_sync_state === "synced"
+        ? `${e.title} をカレンダーに反映しました。`
+        : `カレンダー反映に失敗しました: ${r.gcal_error ?? "不明なエラー"}`
+    );
+    reload();
+  }
+
+  async function backfill() {
+    try {
+      const r = await api<{ retried: number; synced: number; failed: number }>("/gcal/backfill", {
+        method: "POST",
+      });
+      setMsg(`カレンダーへ ${r.synced} 件反映しました${r.failed ? `（失敗 ${r.failed} 件）` : ""}。`);
+      reload();
+    } catch (err) {
+      setMsg((err as Error).message);
     }
   }
 
@@ -213,6 +304,28 @@ export default function Events() {
       )}
 
       <Card title="イベント一覧">
+        {gcalStatus && (
+          <div className="text-xs text-slate-500 mb-2 flex flex-wrap gap-2 items-center">
+            {gcalStatus.enabled ? (
+              <>
+                <span>📅 Googleカレンダー連携: {gcalStatus.calendar_id}</span>
+                {gcalStatus.unsynced > 0 && (
+                  <>
+                    <span className="text-amber-700">未同期 {gcalStatus.unsynced} 件</span>
+                    <button
+                      className="bg-slate-200 text-navy rounded px-2 py-0.5"
+                      onClick={backfill}
+                    >
+                      まとめて反映
+                    </button>
+                  </>
+                )}
+              </>
+            ) : (
+              <span>📅 Googleカレンダー連携は未設定です</span>
+            )}
+          </div>
+        )}
         {creating ? (
           <div className="flex flex-wrap gap-2 items-center text-sm mb-3 pb-3 border-b">
             <select
@@ -267,10 +380,24 @@ export default function Events() {
         <table className="w-full text-sm">
           <tbody>
             {events.map((e) => (
-              <tr key={e.event_id} className="border-t">
-                <td className="py-1">{e.title}</td>
+              <tr
+                key={e.event_id}
+                className={`border-t ${e.status === "cancelled" ? "text-slate-400" : ""}`}
+              >
+                <td className="py-1">
+                  <span className={e.status === "cancelled" ? "line-through" : ""}>{e.title}</span>
+                  {e.origin === "gcal" && (
+                    <span className="ml-1 text-xs text-slate-500">（カレンダー由来）</span>
+                  )}
+                  {e.origin === "line" && (
+                    <span className="ml-1 text-xs text-slate-500">（LINE登録）</span>
+                  )}
+                </td>
                 <td className="text-slate-500">{e.datetime_start.replace("T", " ").slice(0, 16)}</td>
-                <td>{e.status}</td>
+                <td>{STATUS_LABELS[e.status] ?? e.status}</td>
+                <td>
+                  <GcalBadge e={e} enabled={!!gcalStatus?.enabled} />
+                </td>
                 <td className="space-x-2 whitespace-nowrap">
                   <button
                     className="text-xs bg-slate-200 text-navy rounded px-2 py-1"
@@ -284,6 +411,31 @@ export default function Events() {
                   >
                     編集
                   </button>
+                  {e.status === "cancelled" ? (
+                    <button
+                      className="text-xs bg-slate-200 text-navy rounded px-2 py-1"
+                      onClick={() => restoreEvent(e)}
+                    >
+                      再開
+                    </button>
+                  ) : (
+                    <button
+                      className="text-xs bg-slate-200 text-red-700 rounded px-2 py-1"
+                      onClick={() => cancelEvent(e)}
+                    >
+                      中止
+                    </button>
+                  )}
+                  {gcalStatus?.enabled &&
+                    e.status !== "cancelled" &&
+                    e.gcal_sync_state !== "synced" && (
+                      <button
+                        className="text-xs bg-slate-200 text-navy rounded px-2 py-1"
+                        onClick={() => resync(e)}
+                      >
+                        再同期
+                      </button>
+                    )}
                 </td>
               </tr>
             ))}
