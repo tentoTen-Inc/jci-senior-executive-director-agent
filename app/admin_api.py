@@ -20,7 +20,7 @@ from .calendar_import import pull_changes
 from .calendar_sync import push_event, retry_pending, touches_calendar
 from .delivery import execute_delivery
 from .deps import get_repo
-from .events import resolve_targets
+from .events import operating_events, resolve_targets
 from .home import build_home
 from .invite import issue_invite
 from .kpi import attendance_trends, kpi_overview
@@ -28,6 +28,7 @@ from .meeting_package import build_package
 from .members_view import attendance_history, invite_status
 from .models import (
     AttendanceStatus,
+    CommitteeSeat,
     Contact,
     DeliveryJob,
     DeliveryStatus,
@@ -120,8 +121,11 @@ def create_event(
 
 
 @router.get("/events")
-def list_events(status: EventStatus | None = None):
-    return get_repo().list_events(status=status)
+def list_events(status: EventStatus | None = None, include_previous: bool = False):
+    """イベント一覧。既定は運用開始日（設定）以降だけ。include_previous=true で全件。"""
+    repo = get_repo()
+    events = repo.list_events(status=status)
+    return events if include_previous else operating_events(repo, events)
 
 
 @router.get("/events/{event_id}")
@@ -338,7 +342,7 @@ def export_attendances_csv(event_id: str):
         writer.writerow([
             m.member_id,
             m.name,
-            m.committee or "",
+            "・".join(sorted(m.committee_names)),
             status,
             (names.get(att.proxy_member_id, att.proxy_member_id) if att and att.proxy_member_id
              else ""),
@@ -622,6 +626,14 @@ def update_member(
     data = _set_fields(payload)
     if "name" in data and not (data["name"] or "").strip():
         raise HTTPException(status_code=400, detail="氏名は必須です。")
+    if ("committee" in data or "committee_role" in data) and member.committees:
+        # 画面で編集するのは主たる所属だけ。兼務の一覧（先頭が主たる所属）と食い違わないよう揃える
+        primary = data.get("committee", member.committee)
+        role = data.get("committee_role", member.committee_role)
+        rest = member.committees[1:]
+        data["committees"] = (
+            [CommitteeSeat(committee=primary, role=role), *rest] if primary else rest
+        )
     updated = member.model_copy(update=data)
     repo.upsert_member(updated)
     write_audit(

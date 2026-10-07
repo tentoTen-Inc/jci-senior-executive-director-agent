@@ -4,6 +4,7 @@ import { Card } from "../components/Card";
 
 type Settings = {
   kill_switch: boolean;
+  operation_start: string | null;
   quiet_hours: { start: string; end: string; tz: string };
   rate_limit: { per_member_per_day: number; global_per_min: number };
 };
@@ -81,6 +82,29 @@ export default function Settings() {
 
       {settings && (
         <>
+          <Card title="運用開始日（年度の始まり）">
+            <div className="flex items-center gap-2 text-sm">
+              <input
+                type="date"
+                className="border rounded p-1"
+                value={settings.operation_start ?? ""}
+                onChange={(e) =>
+                  setSettings({ ...settings, operation_start: e.target.value || null })
+                }
+              />
+              <button
+                className="bg-brand text-white rounded px-3 py-1"
+                disabled={saving}
+                onClick={() => save(settings)}
+              >
+                保存
+              </button>
+            </div>
+            <p className="text-xs text-slate-400 mt-2">
+              これより前のイベントは、出欠管理の一覧・出席率の推移・カレンダーからの取込の対象外になります（データは消えません）。
+            </p>
+          </Card>
+
           <Card title="キルスイッチ（緊急停止）">
             <div className="flex items-center gap-3 text-sm">
               <span

@@ -6,6 +6,7 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from .attendance import aggregate
+from .events import operating_events
 from .inference import LlmCostSummary, llm_cost_summary
 from .models import DeliveryResult, EventType
 from .repository import Repository
@@ -23,7 +24,7 @@ class TrendPoint(BaseModel):
 
 def attendance_trends(repo: Repository, *, event_type: EventType | None = None) -> list[TrendPoint]:
     """イベントを古い順に並べ、出席率・回答率の推移を返す。"""
-    events = sorted(repo.list_events(), key=lambda e: e.datetime_start)
+    events = sorted(operating_events(repo, repo.list_events()), key=lambda e: e.datetime_start)
     points: list[TrendPoint] = []
     for ev in events:
         if event_type is not None and ev.type != event_type:

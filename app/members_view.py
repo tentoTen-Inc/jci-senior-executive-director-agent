@@ -41,7 +41,7 @@ def invite_status(repo: Repository, *, now: datetime) -> list[InviteStatusRow]:
             InviteStatusRow(
                 member_id=m.member_id,
                 name=m.name,
-                committee=m.committee,
+                committee="・".join(sorted(m.committee_names)) or None,
                 officer_role=m.officer_role,
                 member_type=m.member_type.value,
                 linked=m.line_user_id is not None,

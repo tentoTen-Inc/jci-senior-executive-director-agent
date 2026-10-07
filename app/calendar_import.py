@@ -176,6 +176,10 @@ def _import_new(repo: Repository, item: dict, fields: dict, now: datetime,
     if end < now - timedelta(days=1):
         summary.skipped += 1  # 終わった予定は取り込まない（初回の遡り分など）
         return
+    operation_start = repo.get_settings().operation_start
+    if operation_start and fields["datetime_start"].date() < operation_start:
+        summary.skipped += 1  # 運用開始日（年度の始まり）より前の予定は取り込まない
+        return
     event = Event(
         event_id=f"ev_{uuid.uuid4().hex[:10]}",
         status=EventStatus.draft,

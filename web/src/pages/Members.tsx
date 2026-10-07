@@ -26,6 +26,8 @@ type MemberDetail = {
   kana: string | null;
   committee: string | null;
   committee_role: string | null;
+  committees: { committee: string; role: string | null }[];
+  secondments: { org: string; role: string }[];
   officer_role: string | null;
   member_type: string;
   status: string;
@@ -39,6 +41,7 @@ const MEMBER_TYPES = [
   { key: "office", label: "事務局" },
   { key: "ob", label: "OB" },
   { key: "support", label: "賛助会員" },
+  { key: "youth_support", label: "青年賛助会員" },
 ];
 
 type History = {
@@ -251,6 +254,24 @@ export default function Members() {
 
       {edit && (
         <Card title={`会員を編集: ${edit.name}`}>
+          {(edit.committees?.length > 1 || edit.secondments?.length > 0) && (
+            <div className="text-xs text-slate-600 mb-2 p-2 rounded bg-slate-50">
+              {edit.committees?.length > 1 && (
+                <div>
+                  兼務:{" "}
+                  {edit.committees
+                    .map((c) => `${c.committee}${c.role ? `（${c.role}）` : ""}`)
+                    .join("、")}
+                  <span className="text-slate-400">
+                    （下の「所属委員会」は先頭の主たる所属です。兼務の変更は組織図の取込で行います）
+                  </span>
+                </div>
+              )}
+              {edit.secondments?.length > 0 && (
+                <div>出向: {edit.secondments.map((x) => `${x.org} ${x.role}`).join("、")}</div>
+              )}
+            </div>
+          )}
           <div className="grid gap-2 md:grid-cols-2 text-sm">
             <label className="block">
               <span className="text-xs text-slate-500">氏名</span>
