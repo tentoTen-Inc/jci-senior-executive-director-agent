@@ -26,10 +26,14 @@ def dataset() -> str:
 
 
 def _param(name: str, value) -> dict:
+    # 型を明示しないと BigQuery は STRING として扱い、数値との比較で
+    # 「No matching signature for operator <=」になる（本番で発生）
     if isinstance(value, bool):
         kind, text = "BOOL", str(value).lower()
     elif isinstance(value, int):
         kind, text = "INT64", str(value)
+    elif isinstance(value, float):
+        kind, text = "FLOAT64", repr(value)
     else:
         kind, text = "STRING", str(value)
     return {"name": name, "parameterType": {"type": kind}, "parameterValue": {"value": text}}
@@ -48,10 +52,19 @@ def _post(body: dict) -> dict:
         with urllib.request.urlopen(req, timeout=TIMEOUT_MS / 1000 + 15) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", "replace")[:300]
-        raise QueryError(f"{exc.code}: {detail}") from exc
+        raise QueryError(f"{exc.code}: {_error_message(exc.read())}") from exc
     except urllib.error.URLError as exc:
         raise QueryError(str(exc.reason)) from exc
+
+
+def _error_message(raw: bytes) -> str:
+    """BigQuery のエラー応答から message を1行で取り出す（ログが行ごとに分割されないように）。"""
+    text = raw.decode("utf-8", "replace")
+    try:
+        text = json.loads(text)["error"]["message"]
+    except (ValueError, KeyError, TypeError):
+        pass
+    return " ".join(text.split())[:500]
 
 
 def _cell(value, field: dict):

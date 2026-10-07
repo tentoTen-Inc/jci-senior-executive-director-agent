@@ -1,4 +1,6 @@
 """ボットの送信記録・データレイク読み取り・管理画面API（docs/datalake-design.md §4.3 / P6-3）。"""
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 from linebot.v3.messaging import TextMessage
@@ -104,6 +106,24 @@ def test_query_uses_named_parameters(monkeypatch):
         {"name": "n", "parameterType": {"type": "INT64"}, "parameterValue": {"value": "5"}},
     ]
     assert seen["location"] == "asia-northeast1"
+
+
+def test_float_parameter_is_typed():
+    """距離のしきい値（小数）が STRING になり、本番で比較エラーになった不具合の回帰テスト。"""
+    assert lake_query._param("max_distance", 0.45) == {
+        "name": "max_distance", "parameterType": {"type": "FLOAT64"},
+        "parameterValue": {"value": "0.45"},
+    }
+    assert lake_query._param("flag", True)["parameterType"]["type"] == "BOOL"
+
+
+def test_error_message_is_single_line():
+    raw = json.dumps({"error": {"code": 400, "message":
+                      "No matching signature for operator <=\n  Signature: T1 <= T1"}}).encode()
+    assert lake_query._error_message(raw) == \
+        "No matching signature for operator <= Signature: T1 <= T1"
+    html = b"<html>\nBad Gateway\n</html>"
+    assert lake_query._error_message(html) == "<html> Bad Gateway </html>"
 
 
 def test_query_incomplete_raises(monkeypatch):
