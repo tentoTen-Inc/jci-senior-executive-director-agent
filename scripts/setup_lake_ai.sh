@@ -38,9 +38,22 @@ fi
 CONN_SA="$(bq --project_id="${PROJECT}" show --format=json --connection "${CONN_REF}" \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["cloudResource"]["serviceAccountId"])')"
 echo "   接続のサービスアカウント: ${CONN_SA}"
-gcloud projects add-iam-policy-binding "${PROJECT}" \
-  --member "serviceAccount:${CONN_SA}" --role roles/aiplatform.user \
-  --condition=None --quiet >/dev/null
+# 接続を作った直後は、そのサービスアカウントが IAM にまだ見えず「does not exist」になることがある
+for attempt in 1 2 3 4 5 6 7 8 9; do
+  if gcloud projects add-iam-policy-binding "${PROJECT}" \
+      --member "serviceAccount:${CONN_SA}" --role roles/aiplatform.user \
+      --condition=None --quiet >/dev/null 2>"${TMPDIR:-/tmp}/lake_ai_iam.err"; then
+    echo "   Vertex AI ユーザー権限を付与"
+    break
+  fi
+  if [[ "${attempt}" == 9 ]]; then
+    cat "${TMPDIR:-/tmp}/lake_ai_iam.err" >&2
+    echo "接続のサービスアカウントに権限を付与できませんでした。" >&2
+    exit 1
+  fi
+  echo "   サービスアカウントの反映待ち（${attempt}/8）… 15秒後に再試行"
+  sleep 15
+done
 
 # --------------------------------------------------------------------------- #
 # リモートモデル（権限の反映待ちで最初は失敗することがあるので再試行）
