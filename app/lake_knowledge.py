@@ -13,10 +13,11 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
-from . import config, lake_query
+from . import config, file_links, lake_query
 from .repository import Repository
 
 logger = logging.getLogger("jci-agent.lake_knowledge")
@@ -225,4 +226,46 @@ def context_section(repo: Repository, chunks: list[dict]) -> str:
         body = (chunk.get("content") or "").split("\n", 1)[-1].strip()
         lines.append(f"[{i}] {kind}／{_where(repo, chunk)}／{_date(chunk.get('sent_at'))}")
         lines.append(body)
+    return "\n".join(lines)
+
+
+def _short_date(value) -> str:
+    text = _date(value)
+    if text == "日付不明":
+        return text
+    _, month, day = text.split("-")
+    return f"{int(month)}/{int(day)}"
+
+
+def citation_footer(repo: Repository, chunks: list[dict], answer: str,
+                    user_id: str | None) -> str:
+    """回答で使われた出典番号（[1] 等）の一覧。ファイルにはタップで開けるリンクを付ける。
+
+    同じファイルの複数の断片は1行にまとめる（[2][3] 年内スケジュール.pdf）。
+    """
+    cited = sorted({int(n) for n in re.findall(r"\[(\d+)\]", answer)
+                    if 1 <= int(n) <= len(chunks)})
+    if not cited:
+        return ""
+    groups: dict[tuple, dict] = {}
+    for n in cited:
+        chunk = chunks[n - 1]
+        key = (chunk.get("source_kind"), chunk.get("source_id"))
+        groups.setdefault(key, {"nums": [], "chunk": chunk})["nums"].append(n)
+
+    lines = ["📎 出典"]
+    for group in groups.values():
+        chunk = group["chunk"]
+        label = "".join(f"[{n}]" for n in group["nums"])
+        where = _where(repo, chunk)
+        when = _short_date(chunk.get("sent_at"))
+        if chunk.get("source_kind") == "file":
+            lines.append(f"{label} {chunk.get('title') or 'ファイル'}（{when}・{where}）")
+            url = file_links.file_url(chunk["source_id"], user_id) if user_id else None
+            if url:
+                lines.append(url)
+        else:
+            body = (chunk.get("content") or "").split("\n", 1)[-1].strip().replace("\n", " ")
+            excerpt = body if len(body) <= 30 else body[:30] + "…"
+            lines.append(f"{label} {where}での発言（{when}）「{excerpt}」")
     return "\n".join(lines)

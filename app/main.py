@@ -14,6 +14,7 @@
 """
 import logging
 import os
+import urllib.parse
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -37,7 +38,8 @@ from linebot.v3.webhooks import (
 )
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import ai_feedback, config, gmail, lake, line_push, line_worker
+from . import ai_feedback, config, file_links, gmail, lake, line_push, line_worker
+from . import lake_api as lake_api_module
 from .admin_api import router as admin_router
 from .calendar_import import pull_changes
 from .calendar_intent import ACTION_CAL, handle_calendar_postback
@@ -384,6 +386,32 @@ def tasks_tick():
         "planned": len(jobs), "results": results, "gmail": gmail_result, "gcal": gcal_result,
         "lake": lake_result,
     }
+
+
+@app.get("/files/{token}")
+def open_line_file(token: str):
+    """AI の回答の出典リンク（app/file_links.py）。署名と期限が正しいときだけファイルを返す。"""
+    data = file_links.verify_token(token)
+    if data is None or not line_worker.bucket():
+        return Response(
+            content="リンクの有効期限が切れているか、正しくありません。",
+            status_code=403, media_type="text/plain; charset=utf-8",
+        )
+    name = line_worker.find_content_object(str(data["m"]))
+    if name is None:
+        # 送信取消などで削除済み
+        return Response(content="このファイルは削除されています。", status_code=404,
+                        media_type="text/plain; charset=utf-8")
+    raw, content_type = lake_api_module._gcs_download(f"gs://{line_worker.bucket()}/{name}")
+    filename = name.rsplit("/", 1)[-1]
+    return Response(
+        content=raw, media_type=content_type,
+        headers={
+            # LINE のアプリ内ブラウザでそのまま表示できるよう inline
+            "Content-Disposition": f"inline; filename*=UTF-8''{urllib.parse.quote(filename)}",
+            "Cache-Control": "private, no-store",
+        },
+    )
 
 
 @app.post("/pubsub/line-worker")
