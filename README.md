@@ -42,6 +42,7 @@ app/
   jpdate.py        # 日本語の日付表記(曜日)
   config.py        # 環境/シークレット解決
 scripts/import_roster.py  # 会員名簿xlsxの正規化インポート
+scripts/import_org.py  # 年度の組織図(JSON)の取込(氏名で突き合わせ・兼務・運用開始日)
 scripts/setup_calendar_sync.sh  # カレンダー連携のGCPセットアップ(1回のみ)
 scripts/setup_datalake.sh  # データレイクのGCPセットアップ(冪等)
 scripts/setup_lake_ai.sh  # AI活用(埋め込みモデル・索引)のGCPセットアップ(冪等)

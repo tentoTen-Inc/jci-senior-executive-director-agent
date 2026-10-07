@@ -25,7 +25,13 @@ def _fmt_dt(dt: datetime) -> str:
 
 def _self_lines(member: Member) -> list[str]:
     lines = [f"氏名: {member.name}"]
-    if member.committee:
+    if member.committees:
+        seats = "、".join(
+            f"{seat.committee}（{seat.role}）" if seat.role else seat.committee
+            for seat in member.committees
+        )
+        lines.append(f"所属委員会: {seats}")
+    elif member.committee:
         lines.append(f"所属委員会: {member.committee}")
     if member.officer_role:
         lines.append(f"役職: {member.officer_role}")

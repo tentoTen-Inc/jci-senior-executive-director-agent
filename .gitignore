@@ -26,3 +26,6 @@ web/dist/
 
 # ローカルの git worktree 置き場
 .worktrees/
+
+# 実データ（名簿など個人情報。コミットしない）
+data/

@@ -5,7 +5,7 @@ Firestore のドキュメントは pydantic モデルの ``model_dump(mode="json
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, Field
@@ -43,6 +43,7 @@ class MemberType(StrEnum):
     office = "office"  # 事務局
     ob = "ob"  # OB
     support = "support"  # 賛助会員
+    youth_support = "youth_support"  # 青年賛助会員（委員会に所属して活動する。配信対象）
 
 
 class MemberStatus(StrEnum):
@@ -51,7 +52,9 @@ class MemberStatus(StrEnum):
 
 
 # 配信対象に含める会員区分（OB・賛助は除外）
-_DELIVERABLE_TYPES = (MemberType.regular, MemberType.external_auditor, MemberType.office)
+_DELIVERABLE_TYPES = (
+    MemberType.regular, MemberType.external_auditor, MemberType.office, MemberType.youth_support,
+)
 
 
 class EventType(StrEnum):
@@ -126,6 +129,13 @@ class Secondment(BaseModel):
     role: str
 
 
+class CommitteeSeat(BaseModel):
+    """委員会への所属（1人が複数の委員会に所属できる。2027年度の組織図で発生）。"""
+
+    committee: str
+    role: str | None = None  # 委員長 / 副委員長 / 委員
+
+
 class TargetScope(BaseModel):
     kind: TargetScopeKind = TargetScopeKind.all
     value: list[str] = Field(default_factory=list)
@@ -148,13 +158,22 @@ class Member(BaseModel):
     birthday: str | None = None  # 生年月日（和暦表記をそのまま保持: 例 "H3.11.15"）
     member_type: MemberType = MemberType.regular
     status: MemberStatus = MemberStatus.active
-    committee: str | None = None
+    committee: str | None = None  # 主たる所属（既存の画面・CSV との互換用）
     committee_role: str | None = None  # 委員長/副委員長/委員
+    committees: list[CommitteeSeat] = Field(default_factory=list)  # 兼務を含む全所属
     officer_role: str | None = None  # 理事長/専務理事/...
     secondments: list[Secondment] = Field(default_factory=list)
     contact: Contact = Field(default_factory=Contact)
     line_user_id: str | None = None
     linked_at: datetime | None = None
+
+    @property
+    def committee_names(self) -> set[str]:
+        """兼務を含む所属委員会の名前（主たる所属も含む）。"""
+        names = {seat.committee for seat in self.committees}
+        if self.committee:
+            names.add(self.committee)
+        return names
 
     @property
     def is_deliverable(self) -> bool:
@@ -296,6 +315,9 @@ class Settings(BaseModel):
     kill_switch: bool = False
     quiet_hours: QuietHours = Field(default_factory=QuietHours)
     rate_limit: RateLimit = Field(default_factory=RateLimit)
+    #: 運用開始日（年度の始まり）。これより前のイベントは管理画面の一覧に既定で出さず、
+    #: カレンダーからも取り込まない（データは消さない）。2027年度は 2027-01-01。
+    operation_start: date | None = None
 
 
 class DeliveryJob(BaseModel):

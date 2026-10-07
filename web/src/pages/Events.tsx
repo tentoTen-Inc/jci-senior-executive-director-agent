@@ -106,6 +106,7 @@ export default function Events() {
   const [edit, setEdit] = useState<EventRow | null>(null);
   const [creating, setCreating] = useState(false);
   const [gcalStatus, setGcalStatus] = useState<GcalStatus | null>(null);
+  const [showPrevious, setShowPrevious] = useState(false);
   const [draft, setDraft] = useState({
     type: "例会",
     title: "",
@@ -114,8 +115,10 @@ export default function Events() {
     quorum: "",
   });
 
-  function reload() {
-    api<EventRow[]>("/events").then(setEvents).catch((e) => setMsg(e.message));
+  function reload(previous = showPrevious) {
+    api<EventRow[]>(`/events${previous ? "?include_previous=true" : ""}`)
+      .then(setEvents)
+      .catch((e) => setMsg(e.message));
     api<GcalStatus>("/gcal/status").then(setGcalStatus).catch(() => {});
   }
 
@@ -357,6 +360,17 @@ export default function Events() {
             )}
           </div>
         )}
+        <label className="text-xs text-slate-500 flex items-center gap-1 mb-2">
+          <input
+            type="checkbox"
+            checked={showPrevious}
+            onChange={(e) => {
+              setShowPrevious(e.target.checked);
+              reload(e.target.checked);
+            }}
+          />
+          運用開始日より前（前年度以前）のイベントも表示する
+        </label>
         {creating ? (
           <div className="flex flex-wrap gap-2 items-center text-sm mb-3 pb-3 border-b">
             <select
