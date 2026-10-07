@@ -146,6 +146,16 @@ def _gcs_upload(name: str, raw: bytes, content_type: str, metadata: dict[str, st
         raise RetryLater(f"GCS upload {exc.code}: {detail}") from exc
 
 
+def find_content_object(message_id: str) -> str | None:
+    """メッセージのファイル（line/content/{id}/ 配下）の Cloud Storage 上の名前。無ければ None。"""
+    query = urllib.parse.urlencode({"prefix": object_prefix(message_id)})
+    req = urllib.request.Request(f"{GCS_API}/{bucket()}/o?{query}")
+    req.add_header("Authorization", f"Bearer {lake._token()}")
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        items = json.loads(resp.read()).get("items", [])
+    return items[0]["name"] if items else None
+
+
 def _gcs_delete_prefix(prefix: str) -> int:
     """prefix 配下のオブジェクトをすべて削除し、削除数を返す。"""
     token = lake._token()

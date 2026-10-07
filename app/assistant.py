@@ -91,10 +91,15 @@ def answer_member_question(
 
     result = outcome.result
     text = result.answer
+    # 本文の [1] 等が何を指すか分かるよう、出典の一覧（ファイルは開けるリンク）を付ける
+    footer = lake_knowledge.citation_footer(repo, chunks, result.answer, member.line_user_id)
     if result.needs_human or not result.grounded:
         _escalate(repo, member, question, now=now)
         text = f"{text}\n\n{ESCALATION_NOTE}"
+    # 会話の記憶にはリンク等を入れない（次の質問の文脈には本文だけで足りる）
     _remember(repo, member, question, text, now=now)
+    if footer:
+        text = f"{text}\n\n{footer}"
 
     message = TextMessage(text=text)
     if lake.is_enabled():
