@@ -2,12 +2,13 @@
 # 本番運用の保全設定（冪等。何度実行してもよい）
 #   1. Firestore のバックアップ（7日間の時点復元・毎日のバックアップ4週分・削除保護）
 #   2. 障害通知（Cloud Monitoring → Slack）
-#   3. 月額予算のアラート（→ Slack）
+#   3. 月額予算のアラート（→ メール。BUDGET_EMAIL を指定）
 #
 # 前提（手動・1回だけ）: Cloud Monitoring に Slack の通知先を作っておく。
 #   コンソール → Monitoring → アラート → 「通知チャンネルを編集」→ Slack →「新規追加」
-#   → Slack にサインインして許可 → 通知先チャンネルを選ぶ → 表示名を「jci-sed 障害通知」にする
-# 使い方: ./scripts/setup_ops.sh   （direnv 有効な状態で）
+#   → Slack にサインインして許可 → 通知先チャンネルを選ぶ（表示名は任意）
+#   Slack の通知先が複数あるときは SLACK_CHANNEL_DISPLAY_NAME に表示名かチャンネル名を指定する
+# 使い方: BUDGET_EMAIL=通知先メール ./scripts/setup_ops.sh   （direnv 有効な状態で）
 set -euo pipefail
 
 PROJECT="${GCP_PROJECT_ID:-jci-sed-agent}"
@@ -54,12 +55,22 @@ def call(method, url, body=None):
         return json.loads(resp.read() or b"{}")
 
 channels = call("GET", f"{api}/notificationChannels").get("notificationChannels", [])
-slack = [c for c in channels if c.get("type") == "slack" and c.get("displayName") == channel_name]
-if not slack:
-    print(f"!! Slack の通知先「{channel_name}」が見つかりません。スクリプト冒頭の手順で作成してください。")
+slack = [c for c in channels if c.get("type") == "slack" and c.get("enabled", True)]
+wanted = channel_name.lstrip("#")
+# 表示名・Slack のチャンネル名のどちらでも一致すればよい。Slack の通知先が1つだけならそれを使う
+match = [c for c in slack if c.get("displayName") == channel_name
+         or c.get("labels", {}).get("channel_name", "").lstrip("#") == wanted]
+if not match and len(slack) == 1:
+    match = slack
+if not match:
+    names = ", ".join(f"{c.get('displayName')}（{c.get('labels', {}).get('channel_name')}）"
+                      for c in slack) or "なし"
+    print(f"!! Slack の通知先「{channel_name}」が見つかりません（既存: {names}）。"
+          "SLACK_CHANNEL_DISPLAY_NAME に表示名かチャンネル名を指定してください。")
     sys.exit(1)
-channel = slack[0]["name"]
-print(f">> 通知先: {channel_name}（{channel}）")
+channel = match[0]["name"]
+print(f">> 通知先: {match[0].get('displayName')} → "
+      f"{match[0].get('labels', {}).get('channel_name')}（{channel}）")
 open(channel_file, "w").write(channel)
 
 SERVICES = 'resource.labels.service_name=~"^jci-sed-(agent|admin)$"'
@@ -128,22 +139,47 @@ for policy in policies:
 PY
 
 # --------------------------------------------------------------------------- #
-# 3. 月額予算のアラート（50% / 90% / 100% で Slack に通知）
+# 3. 月額予算のアラート（50% / 90% / 100%）
+#    予算アラートの通知先に使えるのは Cloud Monitoring の「メール」チャンネルだけ（Slack は不可）。
+#    BUDGET_EMAIL にメールアドレスを指定する。Slack に届けたい場合は Slack チャンネルの
+#    メール受信用アドレス（チャンネル設定 → インテグレーション → メールを送信する）を指定する。
 # --------------------------------------------------------------------------- #
-CHANNEL="$(cat "${CHANNEL_FILE}")"
+BUDGET_EMAIL="${BUDGET_EMAIL:-}"
 BILLING="$(gcloud billing projects describe "${PROJECT}" --format='value(billingAccountName)' \
   | sed 's#billingAccounts/##')"
 if gcloud billing budgets list --billing-account="${BILLING}" \
      --format='value(displayName)' 2>/dev/null | grep -qx "jci-sed 月額予算"; then
   echo "   既に存在: 月額予算"
+elif [[ -z "${BUDGET_EMAIL}" ]]; then
+  echo "   月額予算はスキップしました（通知先のメールアドレス BUDGET_EMAIL が未指定）"
 else
-  echo ">> 月額予算 ${BUDGET}（請求先アカウントの通貨）"
+  EMAIL_CHANNEL="$(python3 - "${PROJECT}" "${BUDGET_EMAIL}" "${TOKEN}" <<'PYEMAIL'
+import json, sys, urllib.request
+project, email, token = sys.argv[1:4]
+api = f"https://monitoring.googleapis.com/v3/projects/{project}/notificationChannels"
+def call(method, url, body=None):
+    req = urllib.request.Request(url, data=json.dumps(body).encode() if body else None,
+                                 method=method)
+    req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read() or b"{}")
+for c in call("GET", api).get("notificationChannels", []):
+    if c.get("type") == "email" and c.get("labels", {}).get("email_address") == email:
+        print(c["name"])
+        break
+else:
+    print(call("POST", api, {"type": "email", "displayName": "jci-sed 予算通知",
+                             "labels": {"email_address": email}})["name"])
+PYEMAIL
+)"
+  echo ">> 月額予算 ${BUDGET}（請求先アカウントの通貨）→ ${BUDGET_EMAIL}"
   gcloud billing budgets create --billing-account="${BILLING}" \
     --display-name="jci-sed 月額予算" \
     --budget-amount="${BUDGET}" \
     --filter-projects="projects/${PROJECT}" \
     --threshold-rule=percent=0.5 --threshold-rule=percent=0.9 --threshold-rule=percent=1.0 \
-    --notifications-rule-monitoring-notification-channels="${CHANNEL}" >/dev/null
+    --notifications-rule-monitoring-notification-channels="${EMAIL_CHANNEL}" >/dev/null
 fi
 
 cat <<EOF
@@ -151,5 +187,5 @@ cat <<EOF
 完了しました。
 - Firestore: 7日以内の任意の時点に復元可能・毎日のバックアップ（4週間）・削除保護
 - 障害通知: アプリのエラー / 定期実行の失敗 / LINE データ取込の失敗・滞留 → Slack
-- 月額予算: ${BUDGET}（50%・90%・100% で Slack に通知）
+- 月額予算: ${BUDGET}（50%・90%・100% で ${BUDGET_EMAIL:-（未設定）} に通知）
 EOF
