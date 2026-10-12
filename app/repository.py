@@ -72,6 +72,9 @@ class Repository(Protocol):
     def save_line_group(self, group: LineGroup) -> None: ...
     def get_line_group(self, group_id: str) -> LineGroup | None: ...
     def list_line_groups(self) -> list[LineGroup]: ...
+    def claim_line_event(self, event_id: str) -> bool:
+        """LINE イベントの処理権を取る。初回だけ True（再送・重複配信は False）。"""
+        ...
 
     # --- delivery ---
     def save_delivery_job(self, job: DeliveryJob) -> None: ...
@@ -143,6 +146,7 @@ class InMemoryRepository:
         self._notice_actions: dict[str, NoticeAction] = {}
         self._conversations: dict[str, Conversation] = {}
         self._surveys: dict[str, Survey] = {}
+        self._claimed_line_events: set[str] = set()
 
     # --- members ---
     def upsert_member(self, member: Member) -> None:
@@ -245,6 +249,12 @@ class InMemoryRepository:
     def get_line_group(self, group_id: str) -> LineGroup | None:
         group = self._line_groups.get(group_id)
         return group.model_copy(deep=True) if group else None
+
+    def claim_line_event(self, event_id: str) -> bool:
+        if event_id in self._claimed_line_events:
+            return False
+        self._claimed_line_events.add(event_id)
+        return True
 
     def list_line_groups(self) -> list[LineGroup]:
         return [g.model_copy(deep=True) for g in self._line_groups.values()]

@@ -5,7 +5,7 @@ Repository プロトコルを満たす。ライブ接続を伴うため CI で�
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from .models import (
     Attendance,
@@ -52,6 +52,8 @@ COL_NOTICES = "externalNotices"
 COL_NOTICE_ACTIONS = "noticeActions"
 COL_CONVERSATIONS = "conversations"
 COL_SURVEYS = "surveys"
+COL_LINE_EVENT_CLAIMS = "lineEventClaims"  # TTL（expire_at）で自動削除
+LINE_EVENT_CLAIM_TTL = timedelta(days=7)  # LINE の再送・Pub/Sub の保持（7日）より長く
 SETTINGS_DOC = "global"
 GCAL_SYNC_DOC = "gcal_sync"
 
@@ -182,6 +184,19 @@ class FirestoreRepository:
     def get_line_group(self, group_id: str) -> LineGroup | None:
         snap = self._db.collection(COL_LINE_GROUPS).document(group_id).get()
         return LineGroup.model_validate(snap.to_dict()) if snap.exists else None
+
+    def claim_line_event(self, event_id: str) -> bool:
+        from google.api_core.exceptions import Conflict  # AlreadyExists の親
+
+        now = datetime.now(UTC)
+        try:
+            # create は「無ければ作る」を原子的に行う（同時に2つ届いても片方だけ成功）
+            self._db.collection(COL_LINE_EVENT_CLAIMS).document(event_id).create(
+                {"claimed_at": now, "expire_at": now + LINE_EVENT_CLAIM_TTL}
+            )
+        except Conflict:
+            return False
+        return True
 
     def list_line_groups(self) -> list[LineGroup]:
         return [

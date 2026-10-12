@@ -20,6 +20,15 @@ def behind_iap() -> bool:
     return os.environ.get("ROLE", "").strip() == "admin"
 
 
+def async_line_reply() -> bool:
+    """LINE への返信を Webhook の外（Pub/Sub → /pubsub/line-reply）で作るか。
+
+    環境変数 LINE_ASYNC_REPLY=1 で有効。Push サブスクリプション `line-events-reply` を
+    作ってから有効にする（scripts/setup_line_reply.sh）。無効の間は Webhook の中で返信する。
+    """
+    return os.environ.get("LINE_ASYNC_REPLY", "").strip() == "1"
+
+
 def admin_api_secret() -> str | None:
     """/admin・/tasks 保護用の共有シークレット（環境変数 or Secret Manager）。"""
     return get_secret("ADMIN_API_SECRET", "admin-api-secret")
