@@ -41,6 +41,7 @@ def new_answer_id() -> str:
 def record_answer(
     answer_id: str, member: Member, question: str, answer: str, *,
     sources: list[dict], grounded: bool, needs_human: bool, usage: InferenceUsage,
+    timing: dict | None = None,
 ) -> None:
     """AI 回答を記録する（評価データの元）。"""
     lake.publish([lake.envelope(KIND_ANSWER, {
@@ -59,6 +60,7 @@ def record_answer(
         "model": usage.model,
         "input_tokens": usage.input_tokens,
         "output_tokens": usage.output_tokens,
+        **(timing or {}),  # context_search_ms / llm_ms（高速化の判断材料）
     }, id=answer_id)])
 
 
