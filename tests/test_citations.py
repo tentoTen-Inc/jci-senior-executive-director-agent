@@ -80,26 +80,42 @@ def test_footer_lists_cited_sources_with_file_link(links):
     footer = lake_knowledge.citation_footer(repo, [MSG, PDF0, PDF1], answer, "U_sed")
     lines = footer.split("\n")
     assert lines[0] == "📎 出典"
-    assert lines[1].startswith(
-        "[1] あなたとの個別トークでの発言（10/6）「↑ 福島ブロックの専務LINEグループで流れ"
-    )
+    assert lines[1] == "[1] 個別トークでのやり取り（10/6）"
     # 同じファイルの断片は1行にまとめる
-    assert lines[2] == "[2][3] 年内スケジュール.pdf（10/6・あなたとの個別トーク）"
+    assert lines[2] == "[2][3] 年内スケジュール.pdf（10/6・個別トーク）"
     assert lines[3].startswith("https://jci-sed-agent-6momralspq-an.a.run.app/files/")
     token = lines[3].rsplit("/", 1)[1]
     assert file_links.verify_token(token)["m"] == "634944787685835148"
 
 
-def test_footer_only_cited_numbers(links):
+def test_footer_never_quotes_message_text(links):
+    """個人の発言がそのまま見えないよう、発言の本文は出典欄に出さない（2026-10-12 専務の指摘）。"""
+    repo = InMemoryRepository()
+    footer = lake_knowledge.citation_footer(repo, [MSG, GROUP], "回答[1][2]", "U_sed")
+    assert "福島ブロックの専務LINEグループ" not in footer
+    assert "理事会は10月20日です" not in footer
+    assert "「" not in footer.replace("グループ「", "")  # 引用の括弧が無い
+
+
+def test_footer_only_cited_numbers_and_group_names(links):
     repo = InMemoryRepository()
     repo.save_line_group(LineGroup(group_id="G1", group_name="2027 猪苗代青年会議所 理事会"))
     footer = lake_knowledge.citation_footer(repo, [MSG, GROUP], "理事会は10/20です[2]。[9]", "U")
     assert "[1]" not in footer  # 使っていない出典は出さない
     assert "[9]" not in footer  # 範囲外の番号は無視
-    assert (
-        "[2] グループ「2027 猪苗代青年会議所 理事会」での発言（10/5）「理事会は10月20日です」"
-        in footer
-    )
+    assert "[2] グループ「2027 猪苗代青年会議所 理事会」でのやり取り（10/5）" in footer
+
+
+def test_messages_from_same_place_and_day_are_merged(links):
+    repo = InMemoryRepository()
+    second = {**GROUP, "chunk_id": "message:10:0", "source_id": "10"}
+    other_day = {**GROUP, "chunk_id": "message:11:0", "source_id": "11",
+                 "sent_at": "2026-10-03T00:00:00+00:00"}
+    footer = lake_knowledge.citation_footer(repo, [GROUP, second, other_day], "a[1]b[2]c[3]", "U")
+    assert footer.split("\n")[1:] == [
+        "[1][2] グループでのやり取り（10/5）",
+        "[3] グループでのやり取り（10/3）",
+    ]
 
 
 def test_no_citation_no_footer(links):

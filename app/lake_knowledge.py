@@ -237,11 +237,20 @@ def _short_date(value) -> str:
     return f"{int(month)}/{int(day)}"
 
 
+def _where_short(repo: Repository, chunk: dict) -> str:
+    """出典欄での共有場所（「個別トーク」「グループ『…』」）。"""
+    if chunk.get("scope_type") == "user":
+        return "個別トーク"
+    return _where(repo, chunk)
+
+
 def citation_footer(repo: Repository, chunks: list[dict], answer: str,
                     user_id: str | None) -> str:
     """回答で使われた出典番号（[1] 等）の一覧。ファイルにはタップで開けるリンクを付ける。
 
-    同じファイルの複数の断片は1行にまとめる（[2][3] 年内スケジュール.pdf）。
+    - ファイル: 資料名・日付・共有場所。同じファイルの複数の断片は1行にまとめる。
+    - 発言: **本文は引用しない**（個人の発言がそのまま見えないように）。場所と日付だけを示し、
+      同じ場所・同じ日の発言は1行にまとめる（2026-10-12 専務の判断）。
     """
     cited = sorted({int(n) for n in re.findall(r"\[(\d+)\]", answer)
                     if 1 <= int(n) <= len(chunks)})
@@ -250,14 +259,18 @@ def citation_footer(repo: Repository, chunks: list[dict], answer: str,
     groups: dict[tuple, dict] = {}
     for n in cited:
         chunk = chunks[n - 1]
-        key = (chunk.get("source_kind"), chunk.get("source_id"))
+        if chunk.get("source_kind") == "file":
+            key = ("file", chunk.get("source_id"))
+        else:
+            key = ("message", chunk.get("scope_type"), chunk.get("scope_id"),
+                   _short_date(chunk.get("sent_at")))
         groups.setdefault(key, {"nums": [], "chunk": chunk})["nums"].append(n)
 
     lines = ["📎 出典"]
     for group in groups.values():
         chunk = group["chunk"]
         label = "".join(f"[{n}]" for n in group["nums"])
-        where = _where(repo, chunk)
+        where = _where_short(repo, chunk)
         when = _short_date(chunk.get("sent_at"))
         if chunk.get("source_kind") == "file":
             lines.append(f"{label} {chunk.get('title') or 'ファイル'}（{when}・{where}）")
@@ -265,7 +278,5 @@ def citation_footer(repo: Repository, chunks: list[dict], answer: str,
             if url:
                 lines.append(url)
         else:
-            body = (chunk.get("content") or "").split("\n", 1)[-1].strip().replace("\n", " ")
-            excerpt = body if len(body) <= 30 else body[:30] + "…"
-            lines.append(f"{label} {where}での発言（{when}）「{excerpt}」")
+            lines.append(f"{label} {where}でのやり取り（{when}）")
     return "\n".join(lines)
