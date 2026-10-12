@@ -11,6 +11,15 @@ PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "jci-sed-agent")
 TZ = os.environ.get("TZ", "Asia/Tokyo")
 
 
+def behind_iap() -> bool:
+    """IAP で守られたサービス（管理サービス jci-sed-admin、環境変数 ROLE=admin）で動いているか。
+
+    IAP の付ける X-Goog-Authenticated-User-Email を信用してよいのはこのときだけ。
+    公開サービス（jci-sed-agent）では誰でも同じヘッダを付けて送れるため信用しない。
+    """
+    return os.environ.get("ROLE", "").strip() == "admin"
+
+
 def admin_api_secret() -> str | None:
     """/admin・/tasks 保護用の共有シークレット（環境変数 or Secret Manager）。"""
     return get_secret("ADMIN_API_SECRET", "admin-api-secret")

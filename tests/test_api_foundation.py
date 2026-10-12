@@ -32,9 +32,29 @@ def test_api_is_protected():
     assert noauth.get("/api/members").status_code == 401
 
 
-def test_iap_header_authorizes():
+def test_iap_header_authorizes_behind_iap(monkeypatch):
+    """IAP で守られた管理サービス（ROLE=admin）では IAP のヘッダで認可する。"""
+    monkeypatch.setenv("ROLE", "admin")
     iap_client = TestClient(main.app)
     assert iap_client.get("/api/members", headers=IAP).status_code == 200
+
+
+def test_spoofed_iap_header_rejected_on_public_service(monkeypatch):
+    """公開サービスでは IAP のヘッダを偽装しても入れない（2026-10-12 本番で 200 を確認し修正）。"""
+    monkeypatch.delenv("ROLE", raising=False)
+    public = TestClient(main.app)
+    spoofed = {"X-Goog-Authenticated-User-Email": "accounts.google.com:attacker@example.com"}
+    for path in ("/api/members", "/api/gcal/status", "/admin/events", "/tasks/tick"):
+        res = public.request("POST" if path == "/tasks/tick" else "GET", path, headers=spoofed)
+        assert res.status_code == 401, path
+
+
+def test_admin_token_works_on_both_services(monkeypatch):
+    for role in ("admin", ""):
+        monkeypatch.setenv("ROLE", role)
+        assert TestClient(main.app).get("/api/members", headers=ADMIN_AUTH).status_code == 200
+        wrong = {"X-Admin-Token": "wrong"}
+        assert TestClient(main.app).get("/api/members", headers=wrong).status_code == 401
 
 
 def test_settings_update_writes_audit(repo):

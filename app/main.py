@@ -12,6 +12,7 @@
 - シークレットは関数経由で遅延解決（テスト時に環境変数で差し替え可能）。
 - チャネルアクセストークン未設定でも Webhook は 200 を返し受信ログを残す（返信のみスキップ）。
 """
+import hmac
 import logging
 import os
 import urllib.parse
@@ -70,15 +71,15 @@ PROTECTED_PREFIXES = ("/admin", "/api", "/tasks")
 
 
 def _is_authorized(request: Request) -> bool:
-    # IAP 経由（Cloud Run 前段で認証済み）
-    if request.headers.get("X-Goog-Authenticated-User-Email"):
+    # IAP 経由（Cloud Run 前段で認証済み）。IAP で守られた管理サービスでだけ信用する。
+    # 公開サービスでは誰でもこのヘッダを付けられ、管理 API に入れてしまっていた（2026-10-12 修正）。
+    if config.behind_iap() and request.headers.get("X-Goog-Authenticated-User-Email"):
         return True
     # 共有シークレット。Cloud Run は Authorization: Bearer を IAM 認証として横取りする
     # ため、独自ヘッダ X-Admin-Token を用いる（Cloud Scheduler/管理ツール向け）。
     secret = config.admin_api_secret()
-    if secret and request.headers.get("X-Admin-Token") == secret:
-        return True
-    return False
+    token = request.headers.get("X-Admin-Token")
+    return bool(secret and token and hmac.compare_digest(token, secret))
 
 
 @app.middleware("http")
