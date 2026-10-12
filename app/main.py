@@ -33,11 +33,13 @@ from linebot.v3.messaging import (
     TextMessage,
 )
 from linebot.v3.webhooks import (
+    Event,
     FollowEvent,
     MessageEvent,
     PostbackEvent,
     TextMessageContent,
 )
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import ai_feedback, config, file_links, gmail, lake, line_push, line_worker
@@ -330,6 +332,33 @@ def handle_event(event) -> None:
         logger.info("other event: %s", type(event).__name__)
 
 
+def dispatch_event(event, *, fail_open: bool) -> bool:
+    """重複を除いて1件処理する。処理したら True、処理済みなら False。
+
+    LINE の再送と Pub/Sub の重複配信で同じイベントが2回届いても、返信は1回にする
+    （webhookEventId で処理権を取る）。処理権を記録できないとき、fail_open=True（Webhook の中）は
+    返信を優先して処理し、False（Pub/Sub）は例外を出して再送させる。
+    処理中の失敗は外に出さない（再送すると二重に返信しうるため）。
+    """
+    event_id = getattr(event, "webhook_event_id", None)
+    if event_id:
+        try:
+            claimed = get_repo().claim_line_event(event_id)
+        except Exception:
+            if not fail_open:
+                raise
+            logger.exception("イベントの処理権を記録できません（そのまま処理）: %s", event_id)
+            claimed = True
+        if not claimed:
+            logger.info("処理済みのイベントを無視: %s", event_id)
+            return False
+    try:
+        handle_event(event)
+    except Exception:  # noqa: BLE001 - 1件の失敗で他のイベントを止めない
+        logger.exception("イベント処理に失敗しました: %s", type(event).__name__)
+    return True
+
+
 def handle_postback(user_id: str, data: str) -> list[Message]:
     """postback（出欠ボタン・メニュー）を処理してメッセージ列を返す。"""
     repo = get_repo()
@@ -459,7 +488,8 @@ async def pubsub_line_worker(request: Request):
         logger.exception("Push メッセージを解釈できません（破棄）")
         return Response(status_code=204)
     try:
-        result = line_worker.handle_envelope(get_repo(), env, datetime.now())
+        result = await run_in_threadpool(line_worker.handle_envelope, get_repo(), env,
+                                         datetime.now())
     except Exception:  # noqa: BLE001 - 一時障害は再送で回復させる
         logger.exception("ワーカー処理に失敗（再送待ち）: id=%s", env.get("id"))
         return Response(status_code=500)
@@ -485,14 +515,45 @@ async def line_webhook(request: Request):
 
     # 署名検証済みの生イベントをデータレイクへ（docs/datalake-design.md §4.1）。
     # 応答処理より先に行い、応答処理が失敗しても記録は残す。publish 失敗でも応答は続ける。
-    lake.ingest_webhook(body)
+    published = await run_in_threadpool(lake.ingest_webhook, body)
 
-    for event in events:
-        try:
-            handle_event(event)
-        except Exception:  # noqa: BLE001 - 1件の失敗で他のイベントを止めない
-            logger.exception("イベント処理に失敗しました: %s", type(event).__name__)
+    # 返信は Pub/Sub 経由（/pubsub/line-reply）で作り、LINE にはすぐ 200 を返す。
+    # AI の回答を待ってから返すと LINE の待ち時間を超える（2026-10-12 本番で検証がタイムアウト）。
+    # publish できなかったときだけ、ここで返信する（取りこぼさない）。
+    if not (published and config.async_line_reply()):
+        for event in events:
+            await run_in_threadpool(dispatch_event, event, fail_open=True)
 
     # LINE には常に 200 を返す（個別失敗は内部でログ化）。500 を返すと LINE が再送し、
     # 同じ失敗を繰り返したり二重に返信したりするため。
     return Response(status_code=200)
+
+
+@app.post("/pubsub/line-reply")
+async def pubsub_line_reply(request: Request):
+    """LINE への返信を作る（Pub/Sub Push `line-events-reply`、フィルタ kind="webhook"）。
+
+    認証は /pubsub/line-worker と同じ OIDC。処理権の記録に失敗したときだけ 500 で再送させ、
+    返信処理そのものの失敗は再送しない（二重に返信しないため）。
+    """
+    if not line_worker.is_configured():
+        return Response(status_code=503)
+    if not line_worker.verify_push(request.headers.get("Authorization")):
+        return Response(status_code=401)
+    if not config.async_line_reply():
+        # 無効の間は Webhook の中で返信済み
+        return Response(status_code=204)
+    try:
+        env = line_worker.decode_push(await request.json())
+        if env.get("kind") != lake.KIND_WEBHOOK:
+            return Response(status_code=204)
+        event = Event.from_dict(env["payload"])
+    except Exception:  # noqa: BLE001 - 未知の種類・壊れたメッセージは再送しても直らない
+        logger.info("返信の対象外のメッセージ（破棄）", exc_info=True)
+        return Response(status_code=204)
+    try:
+        await run_in_threadpool(dispatch_event, event, fail_open=False)
+    except Exception:  # noqa: BLE001 - 処理権を記録できない一時障害は再送で回復させる
+        logger.exception("返信処理を開始できません（再送待ち）: id=%s", env.get("id"))
+        return Response(status_code=500)
+    return Response(status_code=204)

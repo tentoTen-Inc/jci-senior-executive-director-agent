@@ -37,7 +37,7 @@
 
 ```
                     ┌──────────────────────── jci-sed-agent (Cloud Run) ────────────────────────┐
-LINE ──Webhook──►   │ /line/webhook: 署名検証 → ① 生イベントを Pub/Sub へ publish → ② 従来の応答処理 │
+LINE ──Webhook──►   │ /line/webhook: 署名検証 → 生イベントを Pub/Sub へ publish → すぐ 200（返信は §4.5） │
                     │ 返信・プッシュ送信時: 送ったメッセージも publish（P6-3）                         │
                     └───────────────┬────────────────────────────────────────────────────────────┘
                                     ▼
@@ -136,7 +136,7 @@ Pub/Sub 属性（サブスクリプションのフィルタ用）: `kind` / `eve
 ### 4.1 Webhook（P6-1）
 1. 署名検証（既存）。
 2. リクエスト本文の `events[]` を**そのまま**封筒に包み、まとめて1回 publish（REST、追加ライブラリ不要）。
-3. 従来の応答処理（メンション判定・招待コード・メニュー等）。
+3. 応答処理（メンション判定・招待コード・メニュー等）は §4.5 のとおり Pub/Sub 経由で行い、LINE にはすぐ 200 を返す。
 
 - publish に失敗しても応答処理は止めない。失敗した生イベントは `LINE_INGEST_FALLBACK` という目印付きで Cloud Logging に残し、
   `scripts/replay_ingest_fallback.py` で後から再投入できるようにする。
@@ -166,6 +166,19 @@ Push サブスクリプション `line-events-worker`（フィルタ `attributes
 ### 4.4 送信取消の本文消去（P6-2）
 LINE では送信から24時間以内に取り消せる。tick（毎時）で、取り消されたメッセージの本文を `events_raw` から消す
 （`JSON_REMOVE`、直近3日のパーティションだけを対象にして安く済ませる）。ビュー `v_messages_for_ai` は即座に除外する。
+
+### 4.5 返信の非同期化（2026-10-12）
+AI の回答を作り終えてから 200 を返すと LINE の待ち時間を超える（Webhook の「検証」がタイムアウト、
+受信の約3割が5秒超）。そこで Webhook は publish したらすぐ 200 を返し、返信は
+Push サブスクリプション `line-events-reply`（フィルタ `attributes.kind = "webhook"`）→ `/pubsub/line-reply` で作る。
+
+- 有効化: 環境変数 `LINE_ASYNC_REPLY=1`（`scripts/setup_line_reply.sh` がサブスクリプション作成後に設定）。
+  無効の間・publish に失敗したときは、従来どおり Webhook の中で返信する（取りこぼさない）。
+- 重複除去: LINE の再送と Pub/Sub の重複配信に備え、`webhookEventId` で処理権を取る
+  （Firestore `lineEventClaims` に `create`、7日後に TTL で削除）。2回目以降は何もしない。
+- 再送の扱い: 処理権を記録できない一時障害だけ 500 で再送させる。返信処理の途中の失敗は再送しない
+  （二重に返信しうるため）。5回失敗で `line-events-dlq` へ。
+- 処理は別スレッドで行い、同じインスタンスに届く Webhook を待たせない。
 
 ---
 

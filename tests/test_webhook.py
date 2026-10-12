@@ -241,3 +241,108 @@ def test_reply_skips_when_token_placeholder():
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__]))
+
+
+# --------------------------------------------------------------------------- #
+# 返信の非同期化（Pub/Sub → /pubsub/line-reply）と重複除去
+# --------------------------------------------------------------------------- #
+PUSH_SA = "pubsub-push@test.iam.gserviceaccount.com"
+ENDPOINT = "https://agent.example/pubsub/line-worker"
+
+
+@pytest.fixture
+def replies(monkeypatch):
+    from app.deps import set_repo
+    from app.repository import InMemoryRepository
+
+    set_repo(InMemoryRepository())
+    captured = []
+    monkeypatch.setattr(main, "reply", lambda token, text: captured.append(token) or True)
+    yield captured
+    set_repo(None)
+
+
+@pytest.fixture
+def async_on(monkeypatch):
+    monkeypatch.setenv("LINE_ASYNC_REPLY", "1")
+    monkeypatch.setenv("LINE_CONTENT_BUCKET", "lake-bucket")
+    monkeypatch.setenv("PUBSUB_PUSH_SA", PUSH_SA)
+    monkeypatch.setenv("PUBSUB_PUSH_AUDIENCE", ENDPOINT)
+    monkeypatch.setattr(main.line_worker, "_verify_jwt",
+                        lambda token, audience: {"email": PUSH_SA, "email_verified": True})
+
+
+def _post_webhook(event: dict):
+    body = _event_envelope(event)
+    return client.post("/line/webhook", content=body, headers={"X-Line-Signature": sign(body)})
+
+
+def _push(event: dict):
+    env = {"v": 1, "id": event["webhookEventId"], "kind": "webhook", "payload": event}
+    data = base64.b64encode(json.dumps(env).encode()).decode()
+    return client.post("/pubsub/line-reply", json={"message": {"data": data}},
+                       headers={"Authorization": "Bearer t"})
+
+
+def test_async_webhook_returns_without_replying(replies, async_on, monkeypatch):
+    monkeypatch.setattr(main.lake, "ingest_webhook", lambda body: True)
+    assert _post_webhook(FOLLOW_EVENT).status_code == 200
+    assert replies == []  # 返信は Pub/Sub 側で作る
+    assert _push(FOLLOW_EVENT).status_code == 204
+    assert replies == ["reply-token-follow"]
+
+
+def test_async_falls_back_inline_when_publish_fails(replies, async_on, monkeypatch):
+    monkeypatch.setattr(main.lake, "ingest_webhook", lambda body: False)
+    assert _post_webhook(FOLLOW_EVENT).status_code == 200
+    assert replies == ["reply-token-follow"]  # 取りこぼさない
+    # あとでリプレイされても二重に返信しない
+    assert _push(FOLLOW_EVENT).status_code == 204
+    assert replies == ["reply-token-follow"]
+
+
+def test_duplicate_delivery_replies_once(replies, async_on):
+    assert _push(FOLLOW_EVENT).status_code == 204
+    redelivered = {**FOLLOW_EVENT, "deliveryContext": {"isRedelivery": True}}
+    assert _push(redelivered).status_code == 204
+    assert replies == ["reply-token-follow"]
+
+
+def test_line_redelivery_inline_replies_once(replies, monkeypatch):
+    monkeypatch.delenv("LINE_ASYNC_REPLY", raising=False)
+    _post_webhook(FOLLOW_EVENT)
+    _post_webhook({**FOLLOW_EVENT, "deliveryContext": {"isRedelivery": True}})
+    assert replies == ["reply-token-follow"]
+
+
+def test_reply_endpoint_ignored_while_async_off(replies, async_on, monkeypatch):
+    monkeypatch.delenv("LINE_ASYNC_REPLY", raising=False)
+    assert _push(FOLLOW_EVENT).status_code == 204
+    assert replies == []  # 無効の間は Webhook の中で返信済み
+
+
+def test_reply_endpoint_requires_push_token(replies, async_on, monkeypatch):
+    def reject(token, audience):
+        raise ValueError("bad")
+
+    monkeypatch.setattr(main.line_worker, "_verify_jwt", reject)
+    assert _push(FOLLOW_EVENT).status_code == 401
+    assert replies == []
+
+
+def test_reply_failure_is_not_retried(replies, async_on, monkeypatch):
+    def boom(event):
+        raise RuntimeError("LINE API down")
+
+    monkeypatch.setattr(main, "handle_event", boom)
+    assert _push(FOLLOW_EVENT).status_code == 204  # 再送すると二重返信になりうるため ack
+
+
+def test_claim_store_outage_is_retried(replies, async_on, monkeypatch):
+    class Down:
+        def claim_line_event(self, event_id):
+            raise RuntimeError("firestore unavailable")
+
+    monkeypatch.setattr(main, "get_repo", lambda: Down())
+    assert _push(FOLLOW_EVENT).status_code == 500  # 返信前なので再送してよい
+    assert replies == []

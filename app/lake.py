@@ -155,16 +155,19 @@ def publish(envelopes: list[dict]) -> bool:
         return False
 
 
-def ingest_webhook(body: str) -> None:
-    """Webhook 本文の全イベントを取り込む。例外は外に出さない。"""
+def ingest_webhook(body: str) -> bool:
+    """Webhook 本文の全イベントを取り込む。例外は外に出さない。
+
+    publish できたら True（無効・失敗なら False。呼び出し側はその場で返信処理に切り替える）。
+    """
     if not is_enabled():
-        return
+        return False
     try:
         envelopes = webhook_envelopes(body)
     except Exception:  # noqa: BLE001
         logger.exception("Webhook 本文の解析に失敗しました（取込スキップ）")
-        return
-    publish(envelopes)
+        return False
+    return publish(envelopes)
 
 
 # --------------------------------------------------------------------------- #

@@ -119,10 +119,10 @@ policies = [
     metric_policy(
         "jci-sed: LINEデータ取込の滞留",
         'resource.type="pubsub_subscription"'
-        ' AND resource.labels.subscription_id=one_of("line-events-to-bq","line-events-worker")'
+        ' AND resource.labels.subscription_id=one_of("line-events-to-bq","line-events-worker","line-events-reply")'
         ' AND metric.type="pubsub.googleapis.com/subscription/oldest_unacked_message_age"',
         1800, "300s",
-        "LINE のデータ取込が30分以上止まっています（BigQuery への保存かファイル取得のワーカー）。",
+        "LINE のデータ取込か返信処理が30分以上止まっています（BigQuery への保存・ファイル取得のワーカー・返信）。",
     ),
 ]
 
