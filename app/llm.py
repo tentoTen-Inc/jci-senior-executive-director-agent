@@ -90,7 +90,11 @@ _CALENDAR_PROMPT = """あなたは青年会議所(JC)の予定管理アシスタ
   特定できなければ null にして confident=false。
 - 日時は "YYYY-MM-DDTHH:MM"(24時間)。「来週火曜」等は今日を基準に解決する。
   年が無ければ今日以降で最も近い日。
-- type は 例会 / 理事会 / 五役会 / 委員会 / 総会 / イベント のいずれか。読み取れなければ null。
+- type は 例会 / 理事会 / 五役会 / 委員会 / 総会 / 行事 / 対外 / 個別 のいずれか。
+  読み取れなければ null。
+  行事=事業・懇親会など、対外=福島ブロック・他LOMなど外部の会議、個別=個人の打合せ・用事。
+- fiscal_year は「次年度」「来年度」「2027年度」のように予定の属する年度が明示されたときだけ西暦4桁
+  (JCの年度は暦年。次年度・来年度は今日の年+1)。明示が無ければ null。
 - update では変更したい項目だけを埋め、他は null。
 - 必須項目(create は開始日時と 種別かタイトル)が欠ける、または解釈が曖昧なら confident=false にし、
   question に聞き返す一文(敬体)を入れる。
@@ -100,6 +104,7 @@ _CALENDAR_PROMPT = """あなたは青年会議所(JC)の予定管理アシスタ
 - action: create | update | cancel | null
 - event_id: 対象の既存予定ID(または null)
 - type: 種別(または null)
+- fiscal_year: 年度(西暦4桁の整数 または null)
 - title: 予定名(または null。種別そのものなら null でよい)
 - start: 開始日時(または null)
 - end: 終了日時(または null)
@@ -451,6 +456,7 @@ class CalendarIntent(BaseModel):
     action: str | None = None  # create | update | cancel
     event_id: str | None = None
     type: str | None = None
+    fiscal_year: int | None = None  # 「次年度」「2027年度」等と明示されたときだけ
     title: str | None = None
     start: str | None = None  # "YYYY-MM-DDTHH:MM"
     end: str | None = None
@@ -480,6 +486,13 @@ def _opt_str(value) -> str | None:
     return text or None
 
 
+def _opt_int(value) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def parse_calendar_intent(text: str, events: str, now: datetime) -> CalendarIntentOutcome | None:
     """自然文から予定の登録・変更・中止の意図を推定する。失敗時は None。"""
     if not text or not text.strip():
@@ -495,6 +508,7 @@ def parse_calendar_intent(text: str, events: str, now: datetime) -> CalendarInte
             action=_opt_str(data.get("action")),
             event_id=_opt_str(data.get("event_id")),
             type=_opt_str(data.get("type")),
+            fiscal_year=_opt_int(data.get("fiscal_year")),
             title=_opt_str(data.get("title")),
             start=_opt_str(data.get("start")),
             end=_opt_str(data.get("end")),

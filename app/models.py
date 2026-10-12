@@ -63,7 +63,9 @@ class EventType(StrEnum):
     五役会 = "五役会"
     委員会 = "委員会"
     総会 = "総会"
-    イベント = "イベント"
+    行事 = "行事"  # 旧「イベント」（カレンダーの【イベント】も行事として読む）
+    対外 = "対外"  # 福島ブロック・他LOM など外部の会議
+    個別 = "個別"  # 個人の打合せ等（カレンダーからは取り込まない）
 
 
 class EventStatus(StrEnum):
@@ -207,6 +209,10 @@ class Event(BaseModel):
     datetime_start: datetime
     datetime_end: datetime | None = None
     location: str | None = None
+    #: 所属する年度（JCの年度=暦年）。None は開催日の年と同じ。
+    #: 前年中に開く翌年度の予定だけ入れる（カレンダーのタイトルに「27」等を前置）。
+    #: docs/calendar-design.md §4.4
+    fiscal_year: int | None = None
     target_scope: TargetScope = Field(default_factory=TargetScope)
     attendance_deadline: datetime | None = None
     material_deadline: datetime | None = None
@@ -252,6 +258,7 @@ class CalendarOpFields(BaseModel):
     datetime_start: datetime | None = None
     datetime_end: datetime | None = None
     location: str | None = None
+    fiscal_year: int | None = None
 
 
 class PendingCalendarOp(BaseModel):

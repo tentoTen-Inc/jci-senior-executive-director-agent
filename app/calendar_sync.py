@@ -21,7 +21,7 @@ JST = ZoneInfo(gcal.TIMEZONE)
 DEFAULT_DURATION = timedelta(hours=2)
 #: カレンダー予定の中身に影響するイベント項目（これ以外の変更では API を呼ばない）
 CALENDAR_FIELDS = frozenset({
-    "type", "title", "datetime_start", "datetime_end", "location",
+    "type", "title", "datetime_start", "datetime_end", "location", "fiscal_year",
     "attendance_deadline", "material_deadline", "target_scope", "status",
 })
 LINK_KEY = "jci_event_id"
@@ -38,12 +38,26 @@ def _calendar_time(dt: datetime) -> dict:
     return {"dateTime": local.isoformat(), "timeZone": gcal.TIMEZONE}
 
 
+def _fiscal_prefix(event: Event) -> str:
+    """翌年度の予定なら年度の下2桁（2027年度 → "27"）。それ以外は空。"""
+    fy = event.fiscal_year
+    return f"{fy % 100:02d}" if fy and fy > event.datetime_start.year else ""
+
+
 def calendar_title(event: Event) -> str:
-    """「【理事会】第8回理事会」。種別とタイトルが同じなら前置しない。"""
+    """「【理事会】第8回理事会」。種別とタイトルが同じなら前置しない。
+
+    翌年度の予定は年度を前置する（「27【対外】第2回次年度会員会議所会議」）。
+    命名規則は docs/calendar-design.md §4.4。
+    """
     kind = str(event.type)
-    if event.title.strip() == kind or event.title.startswith(f"【{kind}】"):
-        return event.title
-    return f"【{kind}】{event.title}"
+    prefix = _fiscal_prefix(event)
+    if event.title.startswith(f"【{kind}】"):
+        return prefix + event.title
+    if event.title.strip() == kind:
+        # 年度を付けるときは「27例会」だと種別として読み戻せないので括弧を残す
+        return f"{prefix}【{kind}】" if prefix else event.title
+    return f"{prefix}【{kind}】{event.title}"
 
 
 def _description(event: Event) -> str:

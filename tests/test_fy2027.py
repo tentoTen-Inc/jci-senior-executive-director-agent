@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from app import calendar_import, gcal, main, rag
 from app.deps import set_repo
-from app.events import resolve_scope
+from app.events import in_operation, resolve_scope
 from app.kpi import attendance_trends
 from app.models import (
     Attendance,
@@ -195,3 +195,36 @@ def test_calendar_import_skips_before_operation_start(fy_repo, monkeypatch):
     assert result["created"] == 1
     imported = [e for e in fy_repo.list_events() if e.gcal_event_id]
     assert [e.gcal_event_id for e in imported] == ["g2027"]
+
+
+def test_next_fiscal_year_event_is_in_operation():
+    start = date(2027, 1, 1)
+    event = Event(event_id="e", type=EventType.対外, title="次年度会員会議所会議",
+                  datetime_start=datetime(2026, 11, 28, 13, 0))
+    assert not in_operation(event, start)
+    assert in_operation(event.model_copy(update={"fiscal_year": 2027}), start)
+    assert not in_operation(event.model_copy(update={"fiscal_year": 2026}), start)
+
+
+def test_admin_list_shows_next_fiscal_year_event(fy_repo):
+    fy_repo.upsert_event(Event(event_id="pre", type=EventType.対外, title="pre",
+                               datetime_start=datetime(2026, 11, 28, 13, 0), fiscal_year=2027))
+    assert sorted(e["event_id"] for e in admin.get("/api/events").json()) == ["new", "pre"]
+
+
+def test_calendar_import_keeps_next_fiscal_year_before_operation_start(fy_repo, monkeypatch):
+    monkeypatch.setenv("GCAL_CALENDAR_ID", "inawashiro.jc@gmail.com")
+    start = datetime(2026, 11, 28, 13, 0)
+    item = {"id": "g27", "etag": '"1"', "status": "confirmed",
+            "summary": "27【対外】第2回次年度会員会議所会議",
+            "start": {"dateTime": start.strftime("%Y-%m-%dT%H:%M:%S+09:00")},
+            "end": {"dateTime": (start + timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:%S+09:00")},
+            "updated": "2026-10-07T03:00:00.000Z"}
+    monkeypatch.setattr(gcal, "list_events", lambda **kw: {"items": [item],
+                                                           "nextSyncToken": "t"})
+
+    result = calendar_import.pull_changes(fy_repo, datetime(2026, 10, 7, 12, 0))
+
+    assert result["created"] == 1
+    [imported] = [e for e in fy_repo.list_events() if e.gcal_event_id]
+    assert imported.fiscal_year == 2027 and imported.type == EventType.対外

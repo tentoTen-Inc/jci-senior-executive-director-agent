@@ -123,6 +123,23 @@ def test_create_event_is_audited(repo):
     assert any(a.action == "event.create" for a in repo.list_audit())
 
 
+def test_event_fiscal_year_create_update_and_validation(repo):
+    res = client.post("/api/events", json={
+        "type": "対外", "title": "第2回次年度会員会議所会議",
+        "datetime_start": "2026-11-28T13:00:00", "fiscal_year": 2027,
+    }, headers=IAP)
+    assert res.status_code == 200
+    event_id = res.json()["event_id"]
+    assert repo.get_event(event_id).fiscal_year == 2027
+
+    assert client.put(f"/api/events/{event_id}", json={"fiscal_year": None}).status_code == 200
+    assert repo.get_event(event_id).fiscal_year is None
+    assert client.put(f"/api/events/{event_id}", json={"fiscal_year": 27}).status_code == 400
+    assert client.post("/api/events", json={
+        "type": "行事", "title": "x", "datetime_start": "2026-11-28T13:00:00", "fiscal_year": 27,
+    }).status_code == 400
+
+
 def test_update_event_partial(repo):
     res = client.put("/api/events/ev1", json={
         "location": "体験交流館",

@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import calendar_sync, gcal, main
+from app.calendar_import import parse_title
 from app.deps import set_repo
 from app.models import (
     Event,
@@ -96,6 +97,30 @@ def test_calendar_body_prefixes_type_and_defaults_end():
 def test_calendar_title_not_duplicated():
     event = Event(event_id="e", type=EventType.例会, title="例会", datetime_start=FUTURE)
     assert calendar_sync.calendar_title(event) == "例会"
+
+
+@pytest.mark.parametrize("kind, title, start, fiscal_year, expected", [
+    # 翌年度の予定だけ年度の下2桁を前置する（docs/calendar-design.md §4.4）
+    (EventType.対外, "第2回次年度会員会議所会議", datetime(2026, 11, 28, 13, 0), 2027,
+     "27【対外】第2回次年度会員会議所会議"),
+    (EventType.例会, "1月例会", datetime(2027, 1, 20, 19, 0), 2027, "【例会】1月例会"),
+    (EventType.委員会, "組織向上 第1回委員会", datetime(2027, 1, 12, 19, 0), None,
+     "【委員会】組織向上 第1回委員会"),
+    (EventType.例会, "【例会】1月例会", datetime(2026, 12, 20, 19, 0), 2027, "27【例会】1月例会"),
+    (EventType.五役会, "五役会", datetime(2026, 12, 1, 20, 0), 2027, "27【五役会】"),
+    (EventType.個別, "遠藤孝行 町役場 打合せ", datetime(2026, 11, 18, 10, 0), None,
+     "【個別】遠藤孝行 町役場 打合せ"),
+])
+def test_calendar_title_naming_rule(kind, title, start, fiscal_year, expected):
+    event = Event(event_id="e", type=kind, title=title, datetime_start=start,
+                  fiscal_year=fiscal_year)
+    assert calendar_sync.calendar_title(event) == expected
+
+
+def test_calendar_title_round_trips_through_import():
+    event = Event(event_id="e", type=EventType.五役会, title="五役会",
+                  datetime_start=datetime(2026, 12, 1, 20, 0), fiscal_year=2027)
+    assert parse_title(calendar_sync.calendar_title(event)) == (EventType.五役会, "五役会", 2027)
 
 
 # --------------------------------------------------------------------------- #
