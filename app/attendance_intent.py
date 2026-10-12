@@ -20,7 +20,7 @@ from linebot.v3.messaging import (
 from .events import resolve_targets
 from .inference import record_inference
 from .line_messages import ACTION_ATT, make_postback
-from .llm import model_name, parse_attendance_intent
+from .llm import model_for, parse_attendance_intent
 from .models import AttendanceStatus, EventStatus, InferenceUsage, Member
 from .repository import Repository
 
@@ -86,7 +86,8 @@ def try_attendance_intent(
     outcome = parse_attendance_intent(text, _events_text(events))
     if outcome is None:
         record_inference(
-            repo, kind="attendance_intent", usage=InferenceUsage(model=model_name()),
+            repo, kind="attendance_intent",
+            usage=InferenceUsage(model=model_for("attendance_intent")),
             now=now, target=member.member_id, ok=False, error="generation_failed",
         )
         return None

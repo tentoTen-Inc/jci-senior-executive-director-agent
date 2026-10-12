@@ -20,8 +20,7 @@ from .events import resolve_scope
 from .gmail_import import import_gmail_notices
 from .inference import record_inference
 from .line_push import member_messages_sender, member_text_sender
-from .llm import digest_notice
-from .llm import model_name as llm_model_name
+from .llm import digest_notice, model_for
 from .models import (
     DeliveryJob,
     ExternalNotice,
@@ -166,7 +165,8 @@ def build_digest(
     outcome = digest_notice(notice.subject, sender, notice.body_text)
     if outcome is None:
         record_inference(
-            repo, kind="external_notice_digest", usage=InferenceUsage(model=llm_model_name()),
+            repo, kind="external_notice_digest",
+            usage=InferenceUsage(model=model_for("external_notice_digest")),
             now=now, target=notice_id, ok=False, error="generation_failed",
         )
         raise HTTPException(

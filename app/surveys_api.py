@@ -16,8 +16,7 @@ from .delivery import execute_delivery
 from .deps import get_repo
 from .inference import record_inference
 from .line_push import member_text_sender
-from .llm import digest_survey
-from .llm import model_name as llm_model_name
+from .llm import digest_survey, model_for
 from .models import DeliveryJob, InferenceUsage, Survey
 from .summary import officer_member_ids
 from .survey_agg import aggregate_survey, free_texts
@@ -298,7 +297,7 @@ def build_digest(
     outcome = digest_survey(texts)
     if outcome is None:
         record_inference(
-            repo, kind="survey_digest", usage=InferenceUsage(model=llm_model_name()),
+            repo, kind="survey_digest", usage=InferenceUsage(model=model_for("survey_digest")),
             now=now, target=survey_id, ok=False, error="generation_failed",
         )
         raise HTTPException(

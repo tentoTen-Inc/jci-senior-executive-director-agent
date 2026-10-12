@@ -178,7 +178,39 @@ class ReviewOutcome(BaseModel):
     usage: InferenceUsage
 
 
+FLASH = "gemini-2.5-flash"
+PRO = "gemini-2.5-pro"
+
+#: AI に任せるタスクごとのモデル選定（コスト・速さ・品質のバランスで選ぶ）。
+#: - 会員とのやり取り（相手が返事を待っている）: Flash。速く安い。要点を答える用途で十分な品質。
+#:   Pro は回答前に長く考えるため 1 回 20〜30 秒かかっていた（2026-10-12 本番計測）。
+#: - 腰を据えて読む分析（待たせない非同期処理・件数も少ない）: Pro。品質を優先。
+#: タスクを追加したらここに理由とともに登録する。個別に変えるときは環境変数
+#: GEMINI_MODEL_<タスク名の大文字>（例: GEMINI_MODEL_MEMBER_QA=gemini-2.5-pro）で上書きする。
+TASK_MODELS: dict[str, str] = {
+    "member_qa": FLASH,  # 会員の自由文の質問への回答（LINE で返事を待つ）
+    "attendance_intent": FLASH,  # 自然文からの出欠の読み取り（LINE で返事を待つ・単純な抽出）
+    "calendar_intent": FLASH,  # 自然文からの予定操作の読み取り（LINE で返事を待つ）
+    "proposal_review": PRO,  # 議案の内容レビュー（論点・矛盾の指摘。品質重視・非同期）
+    "external_notice_digest": PRO,  # 対外連絡の要約と告知文（誤要約を避けたい・非同期）
+    "survey_digest": PRO,  # アンケート自由記述の分析（傾向の読み取り・非同期・件数少）
+}
+
+
+def model_for(task: str) -> str:
+    """タスクに使うモデル。環境変数 GEMINI_MODEL_<TASK> > 上の表 > GEMINI_MODEL > 既定。"""
+    import os
+
+    override = os.environ.get(f"GEMINI_MODEL_{task.upper()}", "").strip()
+    if override:
+        return override
+    if task in TASK_MODELS:
+        return TASK_MODELS[task]
+    return model_name()
+
+
 def model_name() -> str:
+    """表に無いタスクの既定モデル（後方互換）。"""
     import os
 
     return os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)
@@ -203,12 +235,12 @@ def _call_gemini(prompt: str, *, model: str, project: str, location: str) -> Gen
     )
 
 
-def _target() -> tuple[str, str, str]:
-    """(model, project, location) を返す。"""
+def _target(task: str) -> tuple[str, str, str]:
+    """タスクに応じた (model, project, location) を返す。"""
     import os
 
     return (
-        model_name(),
+        model_for(task),
         config.PROJECT_ID,
         os.environ.get("VERTEX_AI_LOCATION", "asia-northeast1"),
     )
@@ -225,7 +257,7 @@ def review_proposal(content: str) -> ReviewOutcome | None:
     """議案本文をレビューして結果と使用トークンを返す。失敗時は None。"""
     if not content or not content.strip():
         return None
-    model, project, location = _target()
+    model, project, location = _target("proposal_review")
     try:
         gen = generate_review(content, model=model, project=project, location=location)
         data = json.loads(gen.text)
@@ -269,7 +301,7 @@ def digest_survey(texts: list[str]) -> SurveyDigestOutcome | None:
     """自由記述を要約・分類・感情傾向にまとめる。失敗時・記述0件は None。"""
     if not texts:
         return None
-    model, project, location = _target()
+    model, project, location = _target("survey_digest")
     try:
         gen = generate_survey_digest(texts, model=model, project=project, location=location)
         data = json.loads(gen.text)
@@ -332,7 +364,7 @@ def parse_attendance_intent(text: str, events: str) -> IntentOutcome | None:
     """自然文から「どのイベントを・どの出欠で」回答したいかを推定する。失敗時は None。"""
     if not text or not text.strip() or not events.strip():
         return None
-    model, project, location = _target()
+    model, project, location = _target("attendance_intent")
     try:
         gen = generate_attendance_intent(
             text, events, model=model, project=project, location=location
@@ -393,7 +425,7 @@ def parse_calendar_intent(text: str, events: str, now: datetime) -> CalendarInte
     """自然文から予定の登録・変更・中止の意図を推定する。失敗時は None。"""
     if not text or not text.strip():
         return None
-    model, project, location = _target()
+    model, project, location = _target("calendar_intent")
     today = now.strftime(f"%Y-%m-%d({jpdate.weekday(now)}) %H:%M")
     try:
         gen = generate_calendar_intent(
@@ -452,7 +484,7 @@ def answer_question(question: str, context: str, history: str = "") -> QaOutcome
     """会員の質問に自LOM情報だけを根拠に答える。失敗時は None（呼び側でフォールバック）。"""
     if not question or not question.strip():
         return None
-    model, project, location = _target()
+    model, project, location = _target("member_qa")
     try:
         gen = generate_answer(
             question, context, history, model=model, project=project, location=location
@@ -510,7 +542,7 @@ def digest_notice(subject: str, sender: str, body: str) -> DigestOutcome | None:
     """対外連絡の要約・告知文・対象・期限・アクションを生成する。失敗時は None。"""
     if not body or not body.strip():
         return None
-    model, project, location = _target()
+    model, project, location = _target("external_notice_digest")
     try:
         gen = generate_notice_digest(
             subject, sender, body, model=model, project=project, location=location

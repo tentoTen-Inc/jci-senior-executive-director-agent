@@ -12,8 +12,7 @@ from .deps import get_repo
 from .drive_import import import_drive_folder
 from .format_check import run_format_check
 from .inference import record_inference
-from .llm import model_name as llm_model_name
-from .llm import review_proposal
+from .llm import model_for, review_proposal
 from .models import (
     InferenceUsage,
     Proposal,
@@ -173,7 +172,8 @@ def llm_review(
         if (p.content or "").strip():
             # 本文はあるがLLM呼び出しが失敗 → コスト/失敗率の可視化のため記録する。
             record_inference(
-                repo, kind="proposal_review", usage=InferenceUsage(model=llm_model_name()),
+                repo, kind="proposal_review",
+                usage=InferenceUsage(model=model_for("proposal_review")),
                 now=now, target=proposal_id, ok=False, error="generation_failed",
             )
         raise HTTPException(
