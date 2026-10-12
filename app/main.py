@@ -28,6 +28,7 @@ from linebot.v3.messaging import (
     Message,
     MessagingApi,
     ReplyMessageRequest,
+    ShowLoadingAnimationRequest,
     TextMessage,
 )
 from linebot.v3.webhooks import (
@@ -178,6 +179,28 @@ def reply_messages(reply_token: str, messages: list[Message]) -> bool:
     return True
 
 
+#: 「入力中…」の表示秒数（5の倍数・最大60）。返事が届いた時点で自動的に消える
+LOADING_SECONDS = 60
+
+
+def start_loading(user_id: str) -> None:
+    """個別トークに「入力中…」のアニメーションを出す（受け付けたことがすぐ分かるように）。
+
+    LINE の仕様で個別トークのみ（グループでは表示できない）。メッセージ通数には数えられない。
+    失敗しても応答処理は続ける。
+    """
+    token = config.line_channel_access_token()
+    if not _access_token_ready(token):
+        return
+    try:
+        with ApiClient(Configuration(access_token=token)) as api_client:
+            MessagingApi(api_client).show_loading_animation(
+                ShowLoadingAnimationRequest(chat_id=user_id, loading_seconds=LOADING_SECONDS)
+            )
+    except Exception:  # noqa: BLE001 - 表示できなくても返事はする
+        logger.warning("入力中アニメーションを表示できませんでした", exc_info=True)
+
+
 def reply(reply_token: str, text: str) -> bool:
     """テキスト1通を返信するショートカット。"""
     return reply_messages(reply_token, [TextMessage(text=text)])
@@ -225,6 +248,8 @@ def handle_text_message(user_id: str, text: str) -> list[Message]:
     if member is None:
         result = verify_and_link(repo, user_id, text, now=datetime.now())
         return [TextMessage(text=result.message)]
+    # AI の回答は数秒〜十数秒かかるため、まず「入力中…」を出して受け付けたことを伝える
+    start_loading(user_id)
     return handle_member_text(repo, member, text, now=datetime.now())
 
 

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from datetime import datetime
 
@@ -70,15 +71,24 @@ def answer_member_question(
     repo: Repository, member: Member, question: str, *, now: datetime
 ) -> list[Message] | None:
     """自由文の質問に答える。LLMが使えない場合は None（呼び側でメニュー誘導）。"""
+    started = time.monotonic()
     context = build_context(repo, member, now=now)
     # LINE で共有された資料・やり取りから、質問者が見られる範囲で関連するものを足す（P6-4a）
     chunks = lake_knowledge.search(member.line_user_id, question)
+    searched = time.monotonic()
     lake_section = lake_knowledge.context_section(repo, chunks)
     if lake_section:
         context = f"{context}\n\n{lake_section}"
     history = _history_text(repo.get_conversation(member.member_id))
 
     outcome = answer_question(question, context, history)
+    generated = time.monotonic()
+    timing = {
+        "context_search_ms": int((searched - started) * 1000),
+        "llm_ms": int((generated - searched) * 1000),
+    }
+    logger.info("AI応答の所要時間: 材料と検索 %.1f秒 / 回答生成 %.1f秒",
+                timing["context_search_ms"] / 1000, timing["llm_ms"] / 1000)
     if outcome is None:
         record_inference(
             repo, kind="member_qa", usage=InferenceUsage(model=model_name()), now=now,
@@ -108,6 +118,7 @@ def answer_member_question(
         ai_feedback.record_answer(
             answer_id, member, question, text, sources=chunks,
             grounded=result.grounded, needs_human=result.needs_human, usage=outcome.usage,
+            timing=timing,
         )
         message = ai_feedback.with_feedback_buttons(message, answer_id)
     return [message]
