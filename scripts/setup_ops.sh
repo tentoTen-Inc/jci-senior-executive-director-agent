@@ -6,7 +6,8 @@
 #
 # 前提（手動・1回だけ）: Cloud Monitoring に Slack の通知先を作っておく。
 #   コンソール → Monitoring → アラート → 「通知チャンネルを編集」→ Slack →「新規追加」
-#   → Slack にサインインして許可 → 通知先チャンネルを選ぶ → 表示名を「jci-sed 障害通知」にする
+#   → Slack にサインインして許可 → 通知先チャンネルを選ぶ（表示名は任意）
+#   Slack の通知先が複数あるときは SLACK_CHANNEL_DISPLAY_NAME に表示名かチャンネル名を指定する
 # 使い方: ./scripts/setup_ops.sh   （direnv 有効な状態で）
 set -euo pipefail
 
@@ -54,12 +55,22 @@ def call(method, url, body=None):
         return json.loads(resp.read() or b"{}")
 
 channels = call("GET", f"{api}/notificationChannels").get("notificationChannels", [])
-slack = [c for c in channels if c.get("type") == "slack" and c.get("displayName") == channel_name]
-if not slack:
-    print(f"!! Slack の通知先「{channel_name}」が見つかりません。スクリプト冒頭の手順で作成してください。")
+slack = [c for c in channels if c.get("type") == "slack" and c.get("enabled", True)]
+wanted = channel_name.lstrip("#")
+# 表示名・Slack のチャンネル名のどちらでも一致すればよい。Slack の通知先が1つだけならそれを使う
+match = [c for c in slack if c.get("displayName") == channel_name
+         or c.get("labels", {}).get("channel_name", "").lstrip("#") == wanted]
+if not match and len(slack) == 1:
+    match = slack
+if not match:
+    names = ", ".join(f"{c.get('displayName')}（{c.get('labels', {}).get('channel_name')}）"
+                      for c in slack) or "なし"
+    print(f"!! Slack の通知先「{channel_name}」が見つかりません（既存: {names}）。"
+          "SLACK_CHANNEL_DISPLAY_NAME に表示名かチャンネル名を指定してください。")
     sys.exit(1)
-channel = slack[0]["name"]
-print(f">> 通知先: {channel_name}（{channel}）")
+channel = match[0]["name"]
+print(f">> 通知先: {match[0].get('displayName')} → "
+      f"{match[0].get('labels', {}).get('channel_name')}（{channel}）")
 open(channel_file, "w").write(channel)
 
 SERVICES = 'resource.labels.service_name=~"^jci-sed-(agent|admin)$"'
