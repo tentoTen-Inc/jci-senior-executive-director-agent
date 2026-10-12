@@ -54,6 +54,7 @@ from .lake_api import router as lake_router
 from .lake_knowledge import index_knowledge
 from .lake_maintenance import redact_unsent
 from .line_messages import apply_postback, build_attendance_request
+from .logging_setup import configure_logging
 from .member_menu import build_menu, handle_member_text
 from .notice_actions import ACTION_NOTICE_DONE, handle_done_postback
 from .notices_api import router as notices_router
@@ -61,7 +62,7 @@ from .proposals_api import router as proposals_router
 from .reminders import plan_reminders
 from .surveys_api import router as surveys_router
 
-logging.basicConfig(level=logging.INFO)
+configure_logging()
 logger = logging.getLogger("jci-agent")
 
 app = FastAPI(title="JCI SED Agent", version="0.1.0")

@@ -47,6 +47,8 @@ scripts/import_org.py  # 年度の組織図(JSON)の取込(氏名で突き合わ
 scripts/setup_calendar_sync.sh  # カレンダー連携のGCPセットアップ(1回のみ)
 scripts/setup_datalake.sh  # データレイクのGCPセットアップ(冪等)
 scripts/setup_lake_ai.sh  # AI活用(埋め込みモデル・索引)のGCPセットアップ(冪等)
+scripts/setup_ops.sh  # 本番の保全(Firestoreバックアップ・Slack障害通知・予算アラート)(冪等)
+scripts/setup_domains.sh  # 独自ドメイン(admin/line.647jc.org)のマッピング(冪等)
 scripts/check_lake_views.py  # ビューSQLをサンプルでBigQuery検証(開発用)
 scripts/replay_ingest_fallback.py  # publish失敗で退避したイベントの再投入
 infra/bigquery/   # events_raw のスキーマとビューSQL
