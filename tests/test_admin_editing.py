@@ -125,7 +125,7 @@ def test_create_event_is_audited(repo):
 
 def test_event_fiscal_year_create_update_and_validation(repo):
     res = client.post("/api/events", json={
-        "type": "対外", "title": "第2回次年度会員会議所会議",
+        "type": "対外", "title": "渡部邦/遠藤孝 第2回次年度会員会議所会議",
         "datetime_start": "2026-11-28T13:00:00", "fiscal_year": 2027,
     }, headers=IAP)
     assert res.status_code == 200

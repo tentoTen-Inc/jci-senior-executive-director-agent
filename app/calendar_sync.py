@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from . import gcal
-from .models import Event, EventStatus, GcalSyncState
+from .models import Event, EventStatus, GcalSyncState, TargetScopeKind
 from .repository import Repository
 
 logger = logging.getLogger("jci-agent.calendar_sync")
@@ -47,7 +47,7 @@ def _fiscal_prefix(event: Event) -> str:
 def calendar_title(event: Event) -> str:
     """「【理事会】第8回理事会」。種別とタイトルが同じなら前置しない。
 
-    翌年度の予定は年度を前置する（「27【対外】第2回次年度会員会議所会議」）。
+    翌年度の予定は年度を前置する（「27【対外】渡部邦/遠藤孝 第2回次年度会員会議所会議」）。
     命名規則は docs/calendar-design.md §4.4。
     """
     kind = str(event.type)
@@ -60,7 +60,19 @@ def calendar_title(event: Event) -> str:
     return f"{prefix}【{kind}】{event.title}"
 
 
-def _description(event: Event) -> str:
+def _scope_names(event: Event, repo: Repository | None) -> list[str]:
+    """対象の表示名。任意指定（custom）は会員IDなので氏名に直す（見つからなければIDのまま）。"""
+    values = event.target_scope.value
+    if event.target_scope.kind != TargetScopeKind.custom or repo is None:
+        return list(values)
+    names = []
+    for member_id in values:
+        member = repo.get_member(member_id)
+        names.append(member.name if member else member_id)
+    return names
+
+
+def _description(event: Event, repo: Repository | None = None) -> str:
     lines = []
     if event.attendance_deadline:
         lines.append(f"出欠締切: {_fmt(event.attendance_deadline)}")
@@ -68,7 +80,7 @@ def _description(event: Event) -> str:
         lines.append(f"資料締切: {_fmt(event.material_deadline)}")
     scope = event.target_scope
     if scope.kind != "all" and scope.value:
-        lines.append(f"対象: {'・'.join(scope.value)}")
+        lines.append(f"対象: {'・'.join(_scope_names(event, repo))}")
     else:
         lines.append("対象: 全員")
     lines.append("")
@@ -76,13 +88,13 @@ def _description(event: Event) -> str:
     return "\n".join(lines)
 
 
-def to_calendar_body(event: Event) -> dict:
-    """イベントをカレンダー予定（events リソース）に変換する。"""
+def to_calendar_body(event: Event, repo: Repository | None = None) -> dict:
+    """イベントをカレンダー予定（events リソース）に変換する。repo は対象の氏名解決に使う。"""
     end = event.datetime_end or (event.datetime_start + DEFAULT_DURATION)
     return {
         "summary": calendar_title(event),
         "location": event.location or "",
-        "description": _description(event),
+        "description": _description(event, repo),
         "start": _calendar_time(event.datetime_start),
         "end": _calendar_time(end),
         "extendedProperties": {"private": {LINK_KEY: event.event_id}},
@@ -120,17 +132,17 @@ def push_event(repo: Repository, event: Event) -> Event:
             synced = event.model_copy(update={"gcal_event_id": None, "gcal_etag": None})
         elif event.gcal_event_id:
             try:
-                res = gcal.patch_event(event.gcal_event_id, to_calendar_body(event))
+                res = gcal.patch_event(event.gcal_event_id, to_calendar_body(event, repo))
             except gcal.GcalError as exc:
                 if exc.status not in (404, 410):
                     raise
                 # カレンダー側で消えていた → 作り直す
-                res = gcal.insert_event(to_calendar_body(event))
+                res = gcal.insert_event(to_calendar_body(event, repo))
             synced = event.model_copy(
                 update={"gcal_event_id": res.get("id"), "gcal_etag": res.get("etag")}
             )
         else:
-            res = gcal.insert_event(to_calendar_body(event))
+            res = gcal.insert_event(to_calendar_body(event, repo))
             synced = event.model_copy(
                 update={"gcal_event_id": res.get("id"), "gcal_etag": res.get("etag")}
             )

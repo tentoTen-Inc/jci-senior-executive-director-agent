@@ -199,7 +199,7 @@ def test_calendar_import_skips_before_operation_start(fy_repo, monkeypatch):
 
 def test_next_fiscal_year_event_is_in_operation():
     start = date(2027, 1, 1)
-    event = Event(event_id="e", type=EventType.対外, title="次年度会員会議所会議",
+    event = Event(event_id="e", type=EventType.対外, title="渡部邦/遠藤孝 次年度会員会議所会議",
                   datetime_start=datetime(2026, 11, 28, 13, 0))
     assert not in_operation(event, start)
     assert in_operation(event.model_copy(update={"fiscal_year": 2027}), start)
@@ -216,7 +216,7 @@ def test_calendar_import_keeps_next_fiscal_year_before_operation_start(fy_repo, 
     monkeypatch.setenv("GCAL_CALENDAR_ID", "inawashiro.jc@gmail.com")
     start = datetime(2026, 11, 28, 13, 0)
     item = {"id": "g27", "etag": '"1"', "status": "confirmed",
-            "summary": "27【対外】第2回次年度会員会議所会議",
+            "summary": "27【対外】渡部邦/遠藤孝 第2回次年度会員会議所会議",
             "start": {"dateTime": start.strftime("%Y-%m-%dT%H:%M:%S+09:00")},
             "end": {"dateTime": (start + timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:%S+09:00")},
             "updated": "2026-10-07T03:00:00.000Z"}

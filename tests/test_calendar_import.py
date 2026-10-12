@@ -96,10 +96,12 @@ def _linked_event(**kw) -> Event:
     ("【飲み会】納会", EventType.行事, "【飲み会】納会", None),
     ("", EventType.行事, "（無題）", None),
     # 命名規則（docs/calendar-design.md §4.4）
-    ("27【対外】第2回次年度会員会議所会議", EventType.対外, "第2回次年度会員会議所会議", 2027),
+    ("27【対外】渡部邦/遠藤孝 第2回次年度会員会議所会議", EventType.対外,
+     "渡部邦/遠藤孝 第2回次年度会員会議所会議", 2027),
+    ("【対外】渡部邦/遠藤孝 福島JC新年会", EventType.対外, "渡部邦/遠藤孝 福島JC新年会", None),
     ("27 【例会】1月例会", EventType.例会, "1月例会", 2027),
     ("【委員会】組織向上 第1回委員会", EventType.委員会, "組織向上 第1回委員会", None),
-    ("【個別】遠藤孝行 町役場 打合せ", EventType.個別, "遠藤孝行 町役場 打合せ", None),
+    ("【個別】遠藤孝 町役場 打合せ", EventType.個別, "遠藤孝 町役場 打合せ", None),
     ("【行事】納涼祭", EventType.行事, "納涼祭", None),
     ("【イベント】納涼祭", EventType.行事, "納涼祭", None),  # 旧い種別名
     ("個別相談会", EventType.行事, "個別相談会", None),  # キーワードでは個別にしない
@@ -136,13 +138,14 @@ def test_new_timed_event_imported_as_draft(repo, monkeypatch):
 
 def test_next_fiscal_year_prefix_is_imported(repo, monkeypatch):
     _use(monkeypatch, {"items": [
-        _item("g9", "27【対外】第2回次年度会員会議所会議", datetime(2026, 11, 28, 13, 0)),
+        _item("g9", "27【対外】渡部邦/遠藤孝 第2回次年度会員会議所会議",
+              datetime(2026, 11, 28, 13, 0)),
     ], "nextSyncToken": "t"})
 
     assert pull_changes(repo, NOW)["created"] == 1
     [event] = repo.list_events()
     assert event.type == EventType.対外
-    assert event.title == "第2回次年度会員会議所会議"
+    assert event.title == "渡部邦/遠藤孝 第2回次年度会員会議所会議"
     assert event.fiscal_year == 2027
 
 
@@ -158,7 +161,7 @@ def test_same_year_prefix_is_not_kept_as_fiscal_year(repo, monkeypatch):
 
 def test_personal_appointment_is_not_imported(repo, monkeypatch):
     _use(monkeypatch, {"items": [
-        _item("g9", "【個別】遠藤孝行 町役場 打合せ", datetime(2026, 11, 18, 10, 0)),
+        _item("g9", "【個別】遠藤孝 町役場 打合せ", datetime(2026, 11, 18, 10, 0)),
     ], "nextSyncToken": "t"})
 
     result = pull_changes(repo, NOW)
