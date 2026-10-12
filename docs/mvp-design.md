@@ -106,7 +106,7 @@ inviteCodes/{code}            # 本人確認用（使い切り）
   memberId, expiresAt, usedAt|null
 
 events/{eventId}
-  type: "例会"|"理事会"|"五役会"|"委員会"|"総会"|"イベント"
+  type: "例会"|"理事会"|"五役会"|"委員会"|"総会"|"行事"|"対外"|"個別"   # 旧「イベント」は「行事」
   title, datetimeStart, datetimeEnd, location
   targetScope: {kind:"all"|"committee"|"officer"|"custom", value:[...]}
   attendanceDeadline: timestamp     # 出欠締切

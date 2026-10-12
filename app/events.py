@@ -33,8 +33,11 @@ def in_operation(event: Event, operation_start) -> bool:
     """運用開始日（年度の始まり）以降のイベントか。未設定なら常に True。
 
     運用開始日より前のデータは消さずに残し、一覧・集計・カレンダー取込の対象から外す。
+    前年中に開く翌年度の予定（fiscal_year が運用開始の年以降）は対象に含める。
     """
-    return operation_start is None or event.datetime_start.date() >= operation_start
+    if operation_start is None or event.datetime_start.date() >= operation_start:
+        return True
+    return event.fiscal_year is not None and event.fiscal_year >= operation_start.year
 
 
 def operating_events(repo: Repository, events: list[Event]) -> list[Event]:

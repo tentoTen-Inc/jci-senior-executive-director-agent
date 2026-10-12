@@ -17,6 +17,7 @@ type EventRow = {
   title: string;
   datetime_start: string;
   location: string | null;
+  fiscal_year?: number | null;
   attendance_deadline: string | null;
   target_scope: { kind: string; value: string[] };
   quorum: number | null;
@@ -64,7 +65,8 @@ function GcalBadge({ e, enabled }: { e: EventRow; enabled: boolean }) {
   return <span className="text-xs rounded px-1.5 py-0.5 bg-amber-50 text-amber-700">📅 未同期</span>;
 }
 
-const EVENT_TYPES = ["例会", "理事会", "五役会", "委員会", "総会", "イベント"];
+const EVENT_TYPES = ["例会", "理事会", "五役会", "委員会", "総会", "行事", "対外", "個別"];
+const FISCAL_YEAR_HELP = "翌年度の予定のときだけ入力（カレンダーのタイトルに「27」が付きます）";
 const SCOPE_KINDS = [
   { key: "all", label: "全員" },
   { key: "committee", label: "委員会" },
@@ -113,6 +115,7 @@ export default function Events() {
     datetime_start: "",
     location: "",
     quorum: "",
+    fiscal_year: "",
   });
 
   function reload(previous = showPrevious) {
@@ -180,12 +183,20 @@ export default function Events() {
           datetime_start: draft.datetime_start,
           location: draft.location.trim() || null,
           quorum: draft.quorum ? Number(draft.quorum) : null,
+          fiscal_year: draft.fiscal_year ? Number(draft.fiscal_year) : null,
           target_scope: { kind: "all", value: [] },
           status: "open",
         }),
       });
       setMsg(`${draft.title} を登録しました。`);
-      setDraft({ type: "例会", title: "", datetime_start: "", location: "", quorum: "" });
+      setDraft({
+        type: "例会",
+        title: "",
+        datetime_start: "",
+        location: "",
+        quorum: "",
+        fiscal_year: "",
+      });
       setCreating(false);
       reload();
     } catch (e) {
@@ -203,6 +214,7 @@ export default function Events() {
           title: edit.title,
           datetime_start: edit.datetime_start,
           location: edit.location,
+          fiscal_year: edit.fiscal_year ?? null,
           attendance_deadline: edit.attendance_deadline,
           target_scope: edit.target_scope,
           quorum: edit.quorum,
@@ -407,12 +419,21 @@ export default function Events() {
               value={draft.quorum}
               onChange={(e) => setDraft({ ...draft, quorum: e.target.value })}
             />
+            <input
+              type="number"
+              className="border rounded p-1 w-24"
+              placeholder="年度 2027"
+              title={FISCAL_YEAR_HELP}
+              value={draft.fiscal_year}
+              onChange={(e) => setDraft({ ...draft, fiscal_year: e.target.value })}
+            />
             <button className="bg-brand text-white rounded px-3 py-1" onClick={createEvent}>
               登録
             </button>
             <button className="text-slate-500 underline text-xs" onClick={() => setCreating(false)}>
               やめる
             </button>
+            <p className="w-full text-xs text-slate-400">年度: {FISCAL_YEAR_HELP}</p>
           </div>
         ) : (
           <button
@@ -431,6 +452,9 @@ export default function Events() {
               >
                 <td className="py-1">
                   <span className={e.status === "cancelled" ? "line-through" : ""}>{e.title}</span>
+                  {e.fiscal_year && e.fiscal_year > Number(e.datetime_start.slice(0, 4)) && (
+                    <span className="ml-1 text-xs text-slate-500">（{e.fiscal_year}年度）</span>
+                  )}
                   {e.origin === "gcal" && (
                     <span className="ml-1 text-xs text-slate-500">（カレンダー由来）</span>
                   )}
@@ -539,6 +563,22 @@ export default function Events() {
                 value={edit.location ?? ""}
                 onChange={(ev) => setEdit({ ...edit, location: ev.target.value || null })}
               />
+            </label>
+            <label className="block">
+              <span className="text-xs text-slate-500">年度</span>
+              <input
+                type="number"
+                className="border rounded p-1 w-full"
+                placeholder="2027"
+                value={edit.fiscal_year ?? ""}
+                onChange={(ev) =>
+                  setEdit({
+                    ...edit,
+                    fiscal_year: ev.target.value ? Number(ev.target.value) : null,
+                  })
+                }
+              />
+              <span className="text-xs text-slate-400">{FISCAL_YEAR_HELP}</span>
             </label>
             <label className="block">
               <span className="text-xs text-slate-500">定足数（人数）</span>

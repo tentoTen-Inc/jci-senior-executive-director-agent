@@ -102,8 +102,9 @@ def _when(start: datetime, end: datetime | None) -> str:
 
 
 def _describe(kind: EventType, title: str, start: datetime, end: datetime | None,
-              location: str | None) -> str:
-    probe = Event(event_id="_", type=kind, title=title, datetime_start=start)
+              location: str | None, fiscal_year: int | None = None) -> str:
+    probe = Event(event_id="_", type=kind, title=title, datetime_start=start,
+                  fiscal_year=fiscal_year)
     lines = [calendar_title(probe), _when(start, end)]
     lines.append(f"場所: {location}" if location else "場所: 未定")
     return "\n".join(lines)
@@ -141,6 +142,11 @@ def _parse_type(value: str | None) -> EventType | None:
         return None
 
 
+def _fiscal_year(value: int | None, start: datetime) -> int | None:
+    """翌年度の予定のときだけ年度を返す（同じ年・ありえない値は None）。"""
+    return value if value and start.year < value <= start.year + 1 else None
+
+
 def _ask(intent: CalendarIntent) -> list[Message]:
     return [TextMessage(text=intent.question or HELP_TEXT)]
 
@@ -160,7 +166,7 @@ def _new_op(member: Member, action: str, now: datetime, *, event_id: str | None 
 
 def _plan_create(member: Member, intent: CalendarIntent, now: datetime):
     start = _parse_dt(intent.start)
-    kind = _parse_type(intent.type) or EventType.イベント
+    kind = _parse_type(intent.type) or EventType.行事
     title = intent.title or (intent.type if _parse_type(intent.type) else None)
     if start is None or not title:
         return None, _ask(intent)
@@ -169,13 +175,15 @@ def _plan_create(member: Member, intent: CalendarIntent, now: datetime):
     end = _parse_dt(intent.end)
     if end is not None and end <= start:
         end = None
+    fiscal_year = _fiscal_year(intent.fiscal_year, start)
     fields = CalendarOpFields(
         type=kind, title=title, datetime_start=start, datetime_end=end, location=intent.location,
+        fiscal_year=fiscal_year,
     )
     op = _new_op(member, "create", now, fields=fields)
     text = (
         "次の予定を登録します。よろしいですか？\n\n"
-        + _describe(kind, title, start, end, intent.location)
+        + _describe(kind, title, start, end, intent.location, fiscal_year)
         + "\n\n※ 下書きとして登録し、Googleカレンダーにも反映します。"
     )
     return op, [_confirm(op, text)]
@@ -188,6 +196,9 @@ def _plan_update(member: Member, intent: CalendarIntent, event: Event, now: date
         datetime_start=_parse_dt(intent.start),
         datetime_end=_parse_dt(intent.end),
         location=intent.location,
+    )
+    fields.fiscal_year = _fiscal_year(
+        intent.fiscal_year, fields.datetime_start or event.datetime_start
     )
     changes = {k: v for k, v in fields.model_dump().items() if v is not None}
     changes = {k: v for k, v in changes.items() if getattr(event, k) != v}
@@ -204,10 +215,10 @@ def _plan_update(member: Member, intent: CalendarIntent, event: Event, now: date
     op = _new_op(member, "update", now, event_id=event.event_id, fields=fields)
     after = _describe(
         changes.get("type", event.type), changes.get("title", event.title), start, end,
-        changes.get("location", event.location),
+        changes.get("location", event.location), changes.get("fiscal_year", event.fiscal_year),
     )
     before = _describe(event.type, event.title, event.datetime_start, event.datetime_end,
-                       event.location)
+                       event.location, event.fiscal_year)
     text = (
         "予定を次のように変更します。よろしいですか？\n\n"
         f"【変更前】\n{before}\n\n【変更後】\n{after}"
@@ -220,7 +231,7 @@ def _plan_cancel(member: Member, event: Event, now: datetime):
     text = (
         "次の予定を中止にします。よろしいですか？\n\n"
         + _describe(event.type, event.title, event.datetime_start, event.datetime_end,
-                    event.location)
+                    event.location, event.fiscal_year)
         + "\n\n※ Googleカレンダーからも削除します（出欠データは残ります）。"
     )
     return op, [_confirm(op, text)]
@@ -283,11 +294,12 @@ def _apply(repo: Repository, op: PendingCalendarOp, now: datetime) -> list[Messa
     if op.action == "create":
         event = Event(
             event_id=f"ev_{uuid.uuid4().hex[:10]}",
-            type=f.type or EventType.イベント,
-            title=f.title or str(f.type or EventType.イベント),
+            type=f.type or EventType.行事,
+            title=f.title or str(f.type or EventType.行事),
             datetime_start=f.datetime_start,
             datetime_end=f.datetime_end,
             location=f.location,
+            fiscal_year=f.fiscal_year,
             status=EventStatus.draft,
             origin=EventOrigin.line,
             updated_at=now,

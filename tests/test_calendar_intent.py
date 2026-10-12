@@ -182,6 +182,30 @@ def test_create_without_title_uses_type(repo, monkeypatch, cal):
     assert created.type == EventType.五役会 and created.title == "五役会"
 
 
+def test_create_next_fiscal_year(repo, monkeypatch, cal):
+    _llm(monkeypatch, action="create", type="対外",
+         title="渡部邦/遠藤孝 第2回次年度会員会議所会議",
+         start="2026-11-28T13:00", fiscal_year=2027, confident=True)
+    msgs = try_calendar_intent(
+        repo, _member(repo), "11/28 13時から2027年度の第2回次年度会員会議所会議を登録", now=NOW
+    )
+    assert "27【対外】渡部邦/遠藤孝 第2回次年度会員会議所会議" in msgs[0].text
+    handle_calendar_postback(repo, _member(repo), _postback_data(msgs)["はい"], now=NOW)
+    [created] = repo.list_events(status=EventStatus.draft)
+    assert created.type == EventType.対外 and created.fiscal_year == 2027
+    summary = cal.events["g1"]["summary"]
+    assert summary == "27【対外】渡部邦/遠藤孝 第2回次年度会員会議所会議"
+
+
+def test_create_ignores_same_year_fiscal_year(repo, monkeypatch, cal):
+    _llm(monkeypatch, action="create", type="例会", title="11月例会",
+         start="2026-11-18T19:00", fiscal_year=2026, confident=True)
+    msgs = try_calendar_intent(repo, _member(repo), "11/18 19時に11月例会を登録", now=NOW)
+    handle_calendar_postback(repo, _member(repo), _postback_data(msgs)["はい"], now=NOW)
+    [created] = repo.list_events(status=EventStatus.draft)
+    assert created.fiscal_year is None
+
+
 # --------------------------------------------------------------------------- #
 # 変更・中止
 # --------------------------------------------------------------------------- #

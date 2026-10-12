@@ -96,6 +96,7 @@ class EventCreate(BaseModel):
     datetime_start: datetime
     datetime_end: datetime | None = None
     location: str | None = None
+    fiscal_year: int | None = None  # 翌年度の予定だけ（カレンダーのタイトルに「27」等を前置）
     target_scope: TargetScope = TargetScope()
     attendance_deadline: datetime | None = None
     reminder_policy_id: str | None = None
@@ -103,11 +104,17 @@ class EventCreate(BaseModel):
     status: EventStatus = EventStatus.open
 
 
+def _check_fiscal_year(value: int | None) -> None:
+    if value is not None and not 2000 <= value <= 2099:
+        raise HTTPException(status_code=400, detail="年度は西暦4桁（例: 2027）で入力してください。")
+
+
 @router.post("/events")
 def create_event(
     payload: EventCreate,
     x_goog_authenticated_user_email: str | None = Header(default=None),
 ):
+    _check_fiscal_year(payload.fiscal_year)
     repo = get_repo()
     event = Event(
         event_id=f"ev_{uuid.uuid4().hex[:10]}", updated_at=datetime.now(), **payload.model_dump()
@@ -144,6 +151,7 @@ class EventUpdate(BaseModel):
     datetime_start: datetime | None = None
     datetime_end: datetime | None = None
     location: str | None = None
+    fiscal_year: int | None = None
     target_scope: TargetScope | None = None
     attendance_deadline: datetime | None = None
     material_deadline: datetime | None = None
@@ -165,6 +173,7 @@ def update_event(
     data = _set_fields(payload)
     if "title" in data and not (data["title"] or "").strip():
         raise HTTPException(status_code=400, detail="タイトルは必須です。")
+    _check_fiscal_year(data.get("fiscal_year"))
     updated = event.model_copy(update={**data, "updated_at": datetime.now()})
     repo.upsert_event(updated)
     write_audit(

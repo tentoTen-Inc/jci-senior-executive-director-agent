@@ -9,6 +9,7 @@ tick（毎時）から呼ぶ。`events.list(syncToken)` で前回からの差分
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -16,6 +17,7 @@ from datetime import datetime, timedelta
 from . import gcal
 from .audit import write_audit
 from .calendar_sync import JST, LINK_KEY, push_event
+from .events import in_operation
 from .models import (
     Event,
     EventOrigin,
@@ -30,8 +32,14 @@ logger = logging.getLogger("jci-agent.calendar_import")
 #: 初回（同期トークン無し）に遡る日数。リンク済み予定の状態を拾うため少し過去から見る。
 INITIAL_LOOKBACK = timedelta(days=30)
 ACTOR = "gcal"
-#: 「イベント」以外の種別はタイトルのキーワードで推定する
-_TYPE_KEYWORDS = [t for t in EventType if t != EventType.イベント]
+#: 【】が無いタイトルはこの種別だけキーワードで推定する（「個別相談会」等を個別・対外にしない）
+_TYPE_KEYWORDS = [
+    EventType.例会, EventType.理事会, EventType.五役会, EventType.委員会, EventType.総会,
+]
+#: 【】内の種別名。旧名「イベント」（命名規則の変更前に作った予定）は行事として読む
+_TITLE_TYPES = {**{t.value: t for t in EventType}, "イベント": EventType.行事}
+#: 翌年度の予定の年度前置（「27【対外】…」）
+_FISCAL_PREFIX = re.compile(r"^(\d{2})\s*(?=【)")
 
 
 @dataclass
@@ -64,20 +72,27 @@ def _to_local(value: str) -> datetime:
     return dt.astimezone(JST).replace(tzinfo=None)
 
 
-def parse_title(summary: str) -> tuple[EventType, str]:
-    """「【理事会】第8回理事会」→ (理事会, 第8回理事会)。前置が無ければキーワードで推定。"""
+def parse_title(summary: str) -> tuple[EventType, str, int | None]:
+    """「27【対外】渡部邦/遠藤孝 第2回次年度会員会議所会議」
+    → (対外, 渡部邦/遠藤孝 第2回次年度会員会議所会議, 2027)。
+
+    年度の前置が無ければ年度は None。【種別】が無ければキーワードで推定し、無ければ行事。
+    """
     text = (summary or "").strip() or "（無題）"
+    fiscal_year = None
+    if m := _FISCAL_PREFIX.match(text):
+        fiscal_year = 2000 + int(m.group(1))
+        text = text[m.end():]
     if text.startswith("【") and "】" in text:
         head, rest = text[1:].split("】", 1)
         rest = rest.strip() or head
-        try:
-            return EventType(head), rest
-        except ValueError:
-            pass
+        kind = _TITLE_TYPES.get(head)
+        if kind is not None:
+            return kind, rest, fiscal_year
     for kind in _TYPE_KEYWORDS:
         if kind in text:
-            return kind, text
-    return EventType.イベント, text
+            return kind, text, fiscal_year
+    return EventType.行事, text, fiscal_year
 
 
 def _times(item: dict) -> tuple[datetime, datetime | None] | None:
@@ -93,7 +108,7 @@ def _calendar_fields(item: dict) -> dict | None:
     times = _times(item)
     if times is None:
         return None
-    kind, title = parse_title(item.get("summary", ""))
+    kind, title, fiscal_year = parse_title(item.get("summary", ""))
     start, end = times
     return {
         "type": kind,
@@ -101,6 +116,8 @@ def _calendar_fields(item: dict) -> dict | None:
         "datetime_start": start,
         "datetime_end": end,
         "location": (item.get("location") or "").strip() or None,
+        # 開催年と同じ年度の前置（「26【例会】…」を2026年に置いた等）は前置なしと同じ扱い
+        "fiscal_year": fiscal_year if fiscal_year and fiscal_year > start.year else None,
     }
 
 
@@ -172,13 +189,13 @@ def _apply_changed(repo: Repository, event: Event, item: dict, fields: dict,
 
 def _import_new(repo: Repository, item: dict, fields: dict, now: datetime,
                 summary: PullSummary) -> None:
+    if fields["type"] == EventType.個別:
+        # 個人の打合せ等は出欠を取る会の予定ではないので、システムのイベントにしない
+        summary.skipped += 1
+        return
     end = fields["datetime_end"] or fields["datetime_start"]
     if end < now - timedelta(days=1):
         summary.skipped += 1  # 終わった予定は取り込まない（初回の遡り分など）
-        return
-    operation_start = repo.get_settings().operation_start
-    if operation_start and fields["datetime_start"].date() < operation_start:
-        summary.skipped += 1  # 運用開始日（年度の始まり）より前の予定は取り込まない
         return
     event = Event(
         event_id=f"ev_{uuid.uuid4().hex[:10]}",
@@ -191,6 +208,10 @@ def _import_new(repo: Repository, item: dict, fields: dict, now: datetime,
         gcal_synced_at=now,
         **fields,
     )
+    if not in_operation(event, repo.get_settings().operation_start):
+        # 運用開始日（年度の始まり）より前の予定は取り込まない（翌年度の「27【…】」は取り込む）
+        summary.skipped += 1
+        return
     repo.upsert_event(event)
     write_audit(repo, actor=ACTOR, action="event.import_from_gcal",
                 target=event.event_id, detail=event.title)

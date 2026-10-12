@@ -88,16 +88,27 @@ def _linked_event(**kw) -> Event:
 # --------------------------------------------------------------------------- #
 # タイトル解釈
 # --------------------------------------------------------------------------- #
-@pytest.mark.parametrize("summary, kind, title", [
-    ("【理事会】第8回理事会", EventType.理事会, "第8回理事会"),
-    ("11月例会のご案内", EventType.例会, "11月例会のご案内"),
-    ("総務委員会 打合せ", EventType.委員会, "総務委員会 打合せ"),
-    ("BBQ", EventType.イベント, "BBQ"),
-    ("【飲み会】納会", EventType.イベント, "【飲み会】納会"),
-    ("", EventType.イベント, "（無題）"),
+@pytest.mark.parametrize("summary, kind, title, fiscal_year", [
+    ("【理事会】第8回理事会", EventType.理事会, "第8回理事会", None),
+    ("11月例会のご案内", EventType.例会, "11月例会のご案内", None),
+    ("総務委員会 打合せ", EventType.委員会, "総務委員会 打合せ", None),
+    ("BBQ", EventType.行事, "BBQ", None),
+    ("【飲み会】納会", EventType.行事, "【飲み会】納会", None),
+    ("", EventType.行事, "（無題）", None),
+    # 命名規則（docs/calendar-design.md §4.4）
+    ("27【対外】渡部邦/遠藤孝 第2回次年度会員会議所会議", EventType.対外,
+     "渡部邦/遠藤孝 第2回次年度会員会議所会議", 2027),
+    ("【対外】渡部邦/遠藤孝 福島JC新年会", EventType.対外, "渡部邦/遠藤孝 福島JC新年会", None),
+    ("27 【例会】1月例会", EventType.例会, "1月例会", 2027),
+    ("【委員会】組織向上 第1回委員会", EventType.委員会, "組織向上 第1回委員会", None),
+    ("【個別】遠藤孝 町役場 打合せ", EventType.個別, "遠藤孝 町役場 打合せ", None),
+    ("【行事】納涼祭", EventType.行事, "納涼祭", None),
+    ("【イベント】納涼祭", EventType.行事, "納涼祭", None),  # 旧い種別名
+    ("個別相談会", EventType.行事, "個別相談会", None),  # キーワードでは個別にしない
+    ("2027年 新年会", EventType.行事, "2027年 新年会", None),
 ])
-def test_parse_title(summary, kind, title):
-    assert parse_title(summary) == (kind, title)
+def test_parse_title(summary, kind, title, fiscal_year):
+    assert parse_title(summary) == (kind, title, fiscal_year)
 
 
 # --------------------------------------------------------------------------- #
@@ -123,6 +134,52 @@ def test_new_timed_event_imported_as_draft(repo, monkeypatch):
     assert event.gcal_sync_state == GcalSyncState.synced
     assert repo.get_gcal_sync_state().sync_token == "tok1"
     assert any(a.action == "event.import_from_gcal" for a in repo.list_audit())
+
+
+def test_next_fiscal_year_prefix_is_imported(repo, monkeypatch):
+    _use(monkeypatch, {"items": [
+        _item("g9", "27【対外】渡部邦/遠藤孝 第2回次年度会員会議所会議",
+              datetime(2026, 11, 28, 13, 0)),
+    ], "nextSyncToken": "t"})
+
+    assert pull_changes(repo, NOW)["created"] == 1
+    [event] = repo.list_events()
+    assert event.type == EventType.対外
+    assert event.title == "渡部邦/遠藤孝 第2回次年度会員会議所会議"
+    assert event.fiscal_year == 2027
+
+
+def test_same_year_prefix_is_not_kept_as_fiscal_year(repo, monkeypatch):
+    _use(monkeypatch, {"items": [
+        _item("g9", "26【例会】11月例会", datetime(2026, 11, 18, 19, 0)),
+    ], "nextSyncToken": "t"})
+
+    pull_changes(repo, NOW)
+    [event] = repo.list_events()
+    assert event.title == "11月例会" and event.fiscal_year is None
+
+
+def test_personal_appointment_is_not_imported(repo, monkeypatch):
+    _use(monkeypatch, {"items": [
+        _item("g9", "【個別】遠藤孝 町役場 打合せ", datetime(2026, 11, 18, 10, 0)),
+    ], "nextSyncToken": "t"})
+
+    result = pull_changes(repo, NOW)
+
+    assert result["created"] == 0 and result["skipped"] == 1
+    assert repo.list_events() == []
+
+
+def test_calendar_prefix_change_updates_fiscal_year(repo, monkeypatch):
+    repo.upsert_event(_linked_event(datetime_start=datetime(2026, 11, 28, 13, 0)))
+    _use(monkeypatch, {"items": [
+        _item("g1", "27【理事会】第8回理事会", datetime(2026, 11, 28, 13, 0), etag='"e2"',
+              jci_id="ev1", updated=NOW),
+    ], "nextSyncToken": "t"})
+
+    assert pull_changes(repo, NOW)["updated"] == 1
+    event = repo.get_event("ev1")
+    assert event.title == "第8回理事会" and event.fiscal_year == 2027
 
 
 def test_all_day_and_past_events_are_skipped(repo, monkeypatch):
