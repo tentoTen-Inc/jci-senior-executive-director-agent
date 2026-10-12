@@ -197,6 +197,26 @@ TASK_MODELS: dict[str, str] = {
 }
 
 
+#: タスクごとの「考える時間」の上限（トークン）。None はモデルの既定（Pro は常に考える）。
+#: Flash は既定だと答える前に長く考え、会員の質問 1 件で 7,800 トークン・37 秒かかった
+#: （上限0で 1.8 秒・回答の質は同等。2026-10-12 計測）。会員とのやり取りは速さ優先で抑える。
+TASK_THINKING_BUDGET: dict[str, int | None] = {
+    "member_qa": 0,  # 材料に書いてあることを答える。考えなくても質は同等だった
+    "attendance_intent": 0,  # 出欠の読み取りは単純な抽出
+    "calendar_intent": 512,  # 「来週火曜」等の日付の計算があるので少しだけ考えさせる
+}
+
+
+def thinking_budget_for(task: str) -> int | None:
+    """タスクの「考える時間」の上限。環境変数 GEMINI_THINKING_<TASK> で上書きできる。"""
+    import os
+
+    override = os.environ.get(f"GEMINI_THINKING_{task.upper()}", "").strip()
+    if override:
+        return int(override)
+    return TASK_THINKING_BUDGET.get(task)
+
+
 def model_for(task: str) -> str:
     """タスクに使うモデル。環境変数 GEMINI_MODEL_<TASK> > 上の表 > GEMINI_MODEL > 既定。"""
     import os
@@ -216,23 +236,52 @@ def model_name() -> str:
     return os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)
 
 
-def _call_gemini(prompt: str, *, model: str, project: str, location: str) -> Generation:
-    """Vertex AI Gemini に JSON 応答を求め、応答と使用トークンを返す。"""
-    import vertexai
-    from vertexai.generative_models import GenerativeModel
+def _call_gemini(prompt: str, *, model: str, project: str, location: str,
+                 thinking_budget: int | None = None) -> Generation:
+    """Vertex AI Gemini の REST API に JSON 応答を求め、応答と使用トークンを返す。
 
-    vertexai.init(project=project, location=location)
-    gm = GenerativeModel(model)
-    resp = gm.generate_content(
-        prompt,
-        generation_config={"response_mime_type": "application/json"},
-    )
-    usage = getattr(resp, "usage_metadata", None)
+    SDK（vertexai.generative_models）は使わない。本番の版では「考える時間」の上限を指定できず、
+    Flash が既定で長く考えて 1 回 20〜37 秒かかっていた（2026-10-12 計測。上限0なら約2秒）。
+    「考える」トークンも出力として課金されるため、コスト計上の出力トークンに含める。
+    """
+    body: dict = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {"responseMimeType": "application/json"},
+    }
+    if thinking_budget is not None:
+        body["generationConfig"]["thinkingConfig"] = {"thinkingBudget": thinking_budget}
+    url = (f"https://{location}-aiplatform.googleapis.com/v1/projects/{project}"
+           f"/locations/{location}/publishers/google/models/{model}:generateContent")
+    res = _post_gemini(url, body)
+    parts = ((res.get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
+    text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
+    if not text:
+        raise RuntimeError(f"Gemini から本文が返りませんでした: {json.dumps(res)[:300]}")
+    usage = res.get("usageMetadata") or {}
     return Generation(
-        text=resp.text,
-        input_tokens=getattr(usage, "prompt_token_count", 0) or 0,
-        output_tokens=getattr(usage, "candidates_token_count", 0) or 0,
+        text=text,
+        input_tokens=int(usage.get("promptTokenCount", 0) or 0),
+        output_tokens=int(usage.get("candidatesTokenCount", 0) or 0)
+        + int(usage.get("thoughtsTokenCount", 0) or 0),
     )
+
+
+def _post_gemini(url: str, body: dict) -> dict:
+    """generateContent を呼ぶ（テストでモックする境界）。"""
+    import urllib.error
+    import urllib.request
+
+    from .lake import _token
+
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST")
+    req.add_header("Authorization", f"Bearer {_token()}")
+    req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        detail = " ".join(exc.read().decode("utf-8", "replace").split())[:300]
+        raise RuntimeError(f"Gemini API {exc.code}: {detail}") from exc
 
 
 def _target(task: str) -> tuple[str, str, str]:
@@ -249,7 +298,8 @@ def _target(task: str) -> tuple[str, str, str]:
 def generate_review(content: str, *, model: str, project: str, location: str) -> Generation:
     """議案レビューの生成（テストでモックする境界）。"""
     return _call_gemini(
-        _PROMPT.format(content=content), model=model, project=project, location=location
+        _PROMPT.format(content=content), model=model, project=project, location=location,
+        thinking_budget=thinking_budget_for("proposal_review"),
     )
 
 
@@ -294,7 +344,10 @@ def generate_survey_digest(
     """自由記述の要約生成（テストでモックする境界）。"""
     joined = "\n".join(f"- {t}" for t in texts)
     prompt = _SURVEY_PROMPT.format(count=len(texts), texts=joined)
-    return _call_gemini(prompt, model=model, project=project, location=location)
+    return _call_gemini(
+        prompt, model=model, project=project, location=location,
+        thinking_budget=thinking_budget_for("survey_digest"),
+    )
 
 
 def digest_survey(texts: list[str]) -> SurveyDigestOutcome | None:
@@ -357,7 +410,10 @@ def generate_attendance_intent(
 ) -> Generation:
     """出欠意図の解釈（テストでモックする境界）。"""
     prompt = _INTENT_PROMPT.format(text=text, events=events)
-    return _call_gemini(prompt, model=model, project=project, location=location)
+    return _call_gemini(
+        prompt, model=model, project=project, location=location,
+        thinking_budget=thinking_budget_for("attendance_intent"),
+    )
 
 
 def parse_attendance_intent(text: str, events: str) -> IntentOutcome | None:
@@ -413,7 +469,10 @@ def generate_calendar_intent(
 ) -> Generation:
     """予定操作の解釈（テストでモックする境界）。"""
     prompt = _CALENDAR_PROMPT.format(text=text, events=events, today=today)
-    return _call_gemini(prompt, model=model, project=project, location=location)
+    return _call_gemini(
+        prompt, model=model, project=project, location=location,
+        thinking_budget=thinking_budget_for("calendar_intent"),
+    )
 
 
 def _opt_str(value) -> str | None:
@@ -477,7 +536,10 @@ def generate_answer(
     prompt = _QA_PROMPT.format(
         context=context, history=history or "（なし）", question=question
     )
-    return _call_gemini(prompt, model=model, project=project, location=location)
+    return _call_gemini(
+        prompt, model=model, project=project, location=location,
+        thinking_budget=thinking_budget_for("member_qa"),
+    )
 
 
 def answer_question(question: str, context: str, history: str = "") -> QaOutcome | None:
@@ -524,7 +586,10 @@ def generate_notice_digest(
 ) -> Generation:
     """対外連絡の要約生成（テストでモックする境界）。"""
     prompt = _NOTICE_PROMPT.format(subject=subject, sender=sender or "不明", body=body)
-    return _call_gemini(prompt, model=model, project=project, location=location)
+    return _call_gemini(
+        prompt, model=model, project=project, location=location,
+        thinking_budget=thinking_budget_for("external_notice_digest"),
+    )
 
 
 def _parse_date(value) -> datetime | None:
