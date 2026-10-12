@@ -67,6 +67,11 @@ class EventType(StrEnum):
     対外 = "対外"  # 福島ブロック・他LOM など外部の会議
     個別 = "個別"  # 個人の打合せ等（カレンダーからは取り込まない）
 
+    @classmethod
+    def _missing_(cls, value):
+        # 改名前に保存した「イベント」を行事として読む（2026-10-12 本番で一覧が 500 になった）
+        return cls.行事 if value == "イベント" else None
+
 
 class EventStatus(StrEnum):
     draft = "draft"
