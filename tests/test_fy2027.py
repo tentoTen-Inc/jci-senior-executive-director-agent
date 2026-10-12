@@ -228,3 +228,13 @@ def test_calendar_import_keeps_next_fiscal_year_before_operation_start(fy_repo, 
     assert result["created"] == 1
     [imported] = [e for e in fy_repo.list_events() if e.gcal_event_id]
     assert imported.fiscal_year == 2027 and imported.type == EventType.対外
+
+
+def test_legacy_event_type_is_read_as_gyoji():
+    """改名前に保存した type="イベント" のイベントも読める（本番の保存データ）。"""
+    from app.models import Event, EventType
+
+    event = Event.model_validate({"event_id": "e1", "type": "イベント", "title": "旧",
+                                  "datetime_start": "2026-05-01T19:00:00"})
+    assert event.type == EventType.行事
+    assert event.model_dump(mode="json")["type"] == "行事"
