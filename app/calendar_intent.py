@@ -25,7 +25,7 @@ from .audit import write_audit
 from .calendar_sync import calendar_title, push_event
 from .inference import record_inference
 from .jpdate import month_day_time
-from .llm import CalendarIntent, model_name, parse_calendar_intent
+from .llm import CalendarIntent, model_for, parse_calendar_intent
 from .models import (
     CalendarOpFields,
     Event,
@@ -236,7 +236,7 @@ def try_calendar_intent(
     outcome = parse_calendar_intent(text, _events_text(candidates), now)
     if outcome is None:
         record_inference(
-            repo, kind="calendar_intent", usage=InferenceUsage(model=model_name()),
+            repo, kind="calendar_intent", usage=InferenceUsage(model=model_for("calendar_intent")),
             now=now, target=member.member_id, ok=False, error="generation_failed",
         )
         return None

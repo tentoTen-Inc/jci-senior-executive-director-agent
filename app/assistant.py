@@ -16,7 +16,7 @@ from linebot.v3.messaging import Message, TextMessage
 
 from . import ai_feedback, lake, lake_knowledge
 from .inference import record_inference
-from .llm import answer_question, model_name
+from .llm import answer_question, model_for
 from .models import (
     Conversation,
     ConversationTurn,
@@ -91,7 +91,7 @@ def answer_member_question(
                 timing["context_search_ms"] / 1000, timing["llm_ms"] / 1000)
     if outcome is None:
         record_inference(
-            repo, kind="member_qa", usage=InferenceUsage(model=model_name()), now=now,
+            repo, kind="member_qa", usage=InferenceUsage(model=model_for("member_qa")), now=now,
             target=member.member_id, ok=False, error="generation_failed",
         )
         return None
