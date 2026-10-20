@@ -2,7 +2,49 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  @apply bg-slate-100 text-slate-900;
-  font-family: system-ui, sans-serif;
+/* デザインの決まりは docs/admin-ui-design.md §2 */
+@layer base {
+  body {
+    @apply bg-canvas text-ink antialiased;
+    font-feature-settings: "palt";
+  }
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    @apply rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-ink outline-none transition;
+  }
+  input:not([type="checkbox"]):not([type="radio"]):focus,
+  select:focus,
+  textarea:focus {
+    @apply border-line ring-2 ring-line/20;
+  }
+  input[type="checkbox"],
+  input[type="radio"] {
+    @apply accent-line;
+  }
+  label {
+    @apply text-sm;
+  }
+}
+
+@layer components {
+  /* 表: 見出しは灰色の小さめ、行は罫線のみ */
+  .tbl {
+    @apply w-full border-collapse text-sm;
+  }
+  .tbl th {
+    @apply whitespace-nowrap px-3 py-2 text-left text-xs font-medium text-ink-sub;
+  }
+  .tbl td {
+    @apply border-t border-gray-100 px-3 py-2.5 align-middle;
+  }
+  .tbl tbody tr:hover td {
+    @apply bg-gray-50/70;
+  }
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+  .field-label {
+    @apply mb-1 block text-xs font-medium text-ink-sub;
+  }
 }

@@ -6,9 +6,12 @@ from datetime import datetime, timedelta
 from pydantic import BaseModel
 
 from .attendance import aggregate
-from .models import DeliveryResult, EventStatus, MemberStatus
+from .calendar_sync import calendar_title
+from .models import DeliveryResult, EventStatus, LinkRequestStatus, MemberStatus, PollStatus
 from .notice_actions import open_action_count
 from .repository import Repository
+
+AGENDA_DAYS = 14  # ホームの「今後の予定」の範囲
 
 
 class EventBrief(BaseModel):
@@ -27,6 +30,27 @@ class ActionRequired(BaseModel):
     open_escalations: int
     unanswered_total: int
     open_notice_actions: int = 0  # 未対応者が残る対外連絡アクション（F5-5）
+    link_requests: int = 0  # LINE 連携の承認待ち（docs/line-link-design.md）
+
+
+class AgendaItem(BaseModel):
+    """今後の予定（下書きも含む。中止は除く）。"""
+
+    event_id: str
+    title: str  # カレンダーと同じ表記（27【対外】…）
+    type: str
+    status: str
+    datetime_start: datetime
+    location: str | None
+
+
+class PollBrief(BaseModel):
+    poll_id: str
+    title: str
+    answered: int
+    targets: int
+    deadline: datetime | None
+    leading: str | None  # いま ○ が最も多い候補（同数は先の日付）
 
 
 class HomeData(BaseModel):
@@ -37,6 +61,8 @@ class HomeData(BaseModel):
     action_required: ActionRequired
     upcoming_events: list[EventBrief]
     this_week: list[EventBrief]
+    agenda: list[AgendaItem] = []
+    polls: list[PollBrief] = []
 
 
 def _brief(repo: Repository, event) -> EventBrief:
@@ -77,6 +103,14 @@ def build_home(repo: Repository, *, now: datetime) -> HomeData:
     week_end = now + timedelta(days=7)
     this_week = [b for b in briefs if b.datetime_start <= week_end]
 
+    agenda_end = now + timedelta(days=AGENDA_DAYS)
+    agenda = [
+        AgendaItem(event_id=e.event_id, title=calendar_title(e), type=str(e.type),
+                   status=e.status.value, datetime_start=e.datetime_start, location=e.location)
+        for e in sorted(repo.list_events(), key=lambda e: e.datetime_start)
+        if e.status != EventStatus.cancelled and now <= e.datetime_start <= agenda_end
+    ]
+
     return HomeData(
         generated_at=now,
         kill_switch=settings.kill_switch,
@@ -87,7 +121,25 @@ def build_home(repo: Repository, *, now: datetime) -> HomeData:
             open_escalations=len(repo.list_escalations(status="open")),
             unanswered_total=unanswered_total,
             open_notice_actions=open_action_count(repo),
+            link_requests=sum(1 for r in repo.list_link_requests()
+                              if r.status == LinkRequestStatus.pending),
         ),
         upcoming_events=briefs[:5],
         this_week=this_week,
+        agenda=agenda,
+        polls=[_poll_brief(repo, p) for p in repo.list_polls() if p.status == PollStatus.open],
     )
+
+
+def _poll_brief(repo: Repository, poll) -> PollBrief:
+    from .schedule_poll import candidate_label, summary  # 循環 import を避ける
+
+    data = summary(repo, poll)
+    ok = {cid: c["ok"] for cid, c in data["counts"].items()}
+    leading = None
+    if ok and max(ok.values()) > 0:
+        best = max(poll.candidates, key=lambda c: (ok.get(c.candidate_id, 0), -c.start.timestamp()))
+        leading = candidate_label(best.start, best.end)
+    return PollBrief(poll_id=poll.poll_id, title=poll.title,
+                     answered=len(data["rows"]) - len(data["pending"]),
+                     targets=len(data["rows"]), deadline=poll.deadline, leading=leading)
