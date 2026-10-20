@@ -26,8 +26,10 @@ from .models import (
     MemberStatus,
     NoticeAction,
     PendingCalendarOp,
+    PollResponse,
     Proposal,
     ReminderPolicy,
+    SchedulePoll,
     Settings,
     Survey,
 )
@@ -52,6 +54,8 @@ COL_NOTICES = "externalNotices"
 COL_NOTICE_ACTIONS = "noticeActions"
 COL_CONVERSATIONS = "conversations"
 COL_SURVEYS = "surveys"
+COL_POLLS = "schedulePolls"
+COL_POLL_RESPONSES = "pollResponses"
 COL_LINE_EVENT_CLAIMS = "lineEventClaims"  # TTL（expire_at）で自動削除
 LINE_EVENT_CLAIM_TTL = timedelta(days=7)  # LINE の再送・Pub/Sub の保持（7日）より長く
 SETTINGS_DOC = "global"
@@ -365,3 +369,28 @@ class FirestoreRepository:
             key=lambda s: (s.synced_at or datetime.min),
             reverse=True,
         )
+
+    # --- 日程調整 ---
+    def save_poll(self, poll: SchedulePoll) -> None:
+        self._db.collection(COL_POLLS).document(poll.poll_id).set(poll.model_dump(mode="json"))
+
+    def get_poll(self, poll_id: str) -> SchedulePoll | None:
+        snap = self._db.collection(COL_POLLS).document(poll_id).get()
+        return SchedulePoll.model_validate(snap.to_dict()) if snap.exists else None
+
+    def list_polls(self) -> list[SchedulePoll]:
+        return sorted(
+            (SchedulePoll.model_validate(d.to_dict())
+             for d in self._db.collection(COL_POLLS).stream()),
+            key=lambda p: p.created_at or datetime.min,
+            reverse=True,
+        )
+
+    def save_poll_response(self, response: PollResponse) -> None:
+        self._db.collection(COL_POLL_RESPONSES).document(response.doc_id).set(
+            response.model_dump(mode="json")
+        )
+
+    def list_poll_responses(self, poll_id: str) -> list[PollResponse]:
+        query = self._db.collection(COL_POLL_RESPONSES).where("poll_id", "==", poll_id)
+        return [PollResponse.model_validate(d.to_dict()) for d in query.stream()]

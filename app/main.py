@@ -60,6 +60,8 @@ from .logging_setup import configure_logging
 from .member_menu import build_menu, handle_member_text
 from .notice_actions import ACTION_NOTICE_DONE, handle_done_postback
 from .notices_api import router as notices_router
+from .polls_api import public_router as liff_router
+from .polls_api import router as polls_router
 from .proposals_api import router as proposals_router
 from .reminders import plan_reminders
 from .surveys_api import router as surveys_router
@@ -102,6 +104,8 @@ app.include_router(notices_router, prefix="/api")
 app.include_router(surveys_router, prefix="/admin")
 app.include_router(surveys_router, prefix="/api")
 app.include_router(lake_router, prefix="/api")  # LINEグループ（データレイク）
+app.include_router(polls_router, prefix="/api")  # 日程調整（管理）
+app.include_router(liff_router)  # 日程調整の LIFF 画面（公開・LINE ログインで本人確認）
 
 
 @app.get("/dashboard", include_in_schema=False)

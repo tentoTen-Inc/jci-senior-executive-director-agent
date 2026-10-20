@@ -629,3 +629,61 @@ class Proposal(BaseModel):
     sed_approval: SedApproval = Field(default_factory=SedApproval)
     history: list[ProposalHistory] = Field(default_factory=list)
     status: str = "open"  # open | closed
+
+
+# --------------------------------------------------------------------------- #
+# 日程調整（docs/schedule-poll-design.md）
+# --------------------------------------------------------------------------- #
+class PollAnswer(StrEnum):
+    ok = "ok"  # ○
+    maybe = "maybe"  # △
+    ng = "ng"  # ×
+
+
+class PollStatus(StrEnum):
+    open = "open"
+    closed = "closed"  # 締切（決定はしていない）
+    decided = "decided"
+
+
+class PollCandidate(BaseModel):
+    candidate_id: str
+    start: datetime
+    end: datetime | None = None
+
+
+class SchedulePoll(BaseModel):
+    poll_id: str
+    title: str
+    event_type: EventType
+    fiscal_year: int | None = None  # 決定時に作るイベントの年度（カレンダーの「27」前置）
+    location: str | None = None
+    candidates: list[PollCandidate] = Field(default_factory=list)
+    target_scope: TargetScope = Field(default_factory=TargetScope)  # 回答してほしい人
+    audience: str | None = None  # 案内文の宛名（「五役の皆さま」等）
+    group_id: str  # 案内・催促・決定を送る LINE グループ
+    deadline: datetime | None = None
+    status: PollStatus = PollStatus.open
+    decided_candidate_id: str | None = None
+    event_id: str | None = None
+    announced_at: datetime | None = None
+    reminded_at: datetime | None = None
+    created_at: datetime | None = None
+    created_by: str | None = None
+
+    def candidate(self, candidate_id: str) -> PollCandidate | None:
+        return next((c for c in self.candidates if c.candidate_id == candidate_id), None)
+
+
+class PollResponse(BaseModel):
+    poll_id: str
+    line_user_id: str
+    display_name: str | None = None  # LINE の表示名
+    member_id: str | None = None  # 連携済みなら自動、未連携なら本人が選ぶ（自己申告）
+    answers: dict[str, PollAnswer] = Field(default_factory=dict)  # candidate_id → ○△×
+    comment: str | None = None
+    updated_at: datetime | None = None
+
+    @property
+    def doc_id(self) -> str:
+        return f"{self.poll_id}_{self.line_user_id}"

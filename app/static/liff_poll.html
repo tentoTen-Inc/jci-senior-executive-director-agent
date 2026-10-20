@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>日程調整</title>
+<!-- 日程調整の LIFF 画面（docs/schedule-poll-design.md）。__LIFF_ID__ はサーバーが埋め込む -->
+<script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  :root { --brand: #06c755; --ink: #1f2937; --sub: #6b7280; --line: #e5e7eb; --bg: #f7f7f8;
+          --ok: #16a34a; --maybe: #d97706; --ng: #9ca3af; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+         color: var(--ink); background: var(--bg); font-size: 16px; }
+  main { max-width: 560px; margin: 0 auto; padding: 16px 16px 96px; }
+  h1 { font-size: 20px; margin: 4px 0 6px; }
+  .meta { color: var(--sub); font-size: 14px; line-height: 1.6; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 14px;
+          margin-top: 14px; }
+  .card h2 { font-size: 15px; margin: 0 0 10px; }
+  .banner { background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; border-radius: 10px;
+            padding: 10px 12px; margin-top: 12px; font-size: 14px; }
+  .cand { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+          padding: 10px 0; border-top: 1px solid var(--line); }
+  .cand:first-of-type { border-top: 0; }
+  .cand .label { font-weight: 600; }
+  .cand .count { color: var(--sub); font-size: 12px; margin-top: 2px; }
+  .cand.decided .label::after { content: " 決定"; color: var(--brand); font-size: 12px; }
+  .choices { display: flex; gap: 6px; }
+  .choices button { width: 46px; height: 42px; border-radius: 10px; border: 1px solid var(--line);
+                    background: #fff; font-size: 20px; color: var(--sub); }
+  .choices button[aria-pressed="true"].ok { background: var(--ok); border-color: var(--ok); color: #fff; }
+  .choices button[aria-pressed="true"].maybe { background: var(--maybe); border-color: var(--maybe); color: #fff; }
+  .choices button[aria-pressed="true"].ng { background: var(--ng); border-color: var(--ng); color: #fff; }
+  select, textarea { width: 100%; font-size: 16px; padding: 10px; border: 1px solid var(--line);
+                     border-radius: 10px; background: #fff; color: var(--ink); }
+  textarea { min-height: 72px; resize: vertical; }
+  .hint { color: var(--sub); font-size: 13px; margin-top: 6px; }
+  .submit { position: fixed; left: 0; right: 0; bottom: 0; padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+            background: rgba(255,255,255,.96); border-top: 1px solid var(--line); }
+  .submit button { display: block; width: 100%; max-width: 560px; margin: 0 auto; height: 48px;
+                   border: 0; border-radius: 12px; background: var(--brand); color: #fff;
+                   font-size: 16px; font-weight: 700; }
+  .submit button:disabled { background: #a7f3d0; }
+  .toast { margin-top: 12px; padding: 10px 12px; border-radius: 10px; font-size: 14px; }
+  .toast.ok { background: #ecfdf5; color: #065f46; }
+  .toast.err { background: #fef2f2; color: #991b1b; }
+  .table { width: 100%; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { border-bottom: 1px solid var(--line); padding: 8px 6px; text-align: center; white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  td.note { white-space: normal; text-align: left; color: var(--sub); font-size: 12px; }
+  tr.me td { background: #f0fdf4; }
+  .mark-ok { color: var(--ok); font-weight: 700; } .mark-maybe { color: var(--maybe); font-weight: 700; }
+  .mark-ng { color: var(--ng); }
+  .loading { color: var(--sub); text-align: center; padding: 48px 0; }
+</style>
+</head>
+<body>
+<main id="app"><p class="loading">読み込み中…</p></main>
+<div class="submit" id="submitBar" hidden><button id="submitBtn" type="button">この内容で回答する</button></div>
+<script>
+(() => {
+  const LIFF_ID = "__LIFF_ID__";
+  const MARKS = { ok: "○", maybe: "△", ng: "×" };
+  const app = document.getElementById("app");
+  const bar = document.getElementById("submitBar");
+  const btn = document.getElementById("submitBtn");
+  let state = null;          // サーバーの view
+  let answers = {};          // 編集中の ○△×
+  let pollId = null;
+  let chosen = "";          // 「あなたは」で選んだ会員（未保存の選択も保つ）
+
+  const el = (tag, attrs = {}, ...children) => {
+    const node = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === "class") node.className = v;
+      else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+      else if (v !== null && v !== undefined && v !== false) node.setAttribute(k, v);
+    }
+    for (const c of children.flat()) {
+      if (c === null || c === undefined || c === false) continue;
+      node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+    }
+    return node;
+  };
+
+  function fail(message) {
+    bar.hidden = true;
+    app.replaceChildren(el("div", { class: "toast err" }, message));
+  }
+
+  function findPollId() {
+    const params = new URLSearchParams(location.search);
+    if (params.get("poll")) return params.get("poll");
+    // LIFF の初回リダイレクトでは liff.state に元のクエリが入る
+    const st = params.get("liff.state");
+    if (st) return new URLSearchParams(st.replace(/^[^?]*\?/, "")).get("poll");
+    return null;
+  }
+
+  async function call(method, body) {
+    const res = await fetch(`/liff/api/polls/${encodeURIComponent(pollId)}${method === "PUT" ? "/response" : ""}`, {
+      method,
+      headers: { "Authorization": `Bearer ${liff.getIDToken()}`, "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) { liff.logout(); liff.login({ redirectUri: location.href }); throw new Error("再ログインします…"); }
+    if (!res.ok) throw new Error(data.detail || `エラーが発生しました（${res.status}）`);
+    return data;
+  }
+
+  function render(flash) {
+    const { poll, me, members, responses, counts } = state;
+    const open = poll.status === "open";
+    const kids = [];
+    kids.push(el("div", { class: "meta" }, "日程調整"));
+    kids.push(el("h1", {}, poll.title));
+    kids.push(el("div", { class: "meta" },
+      poll.audience ? el("div", {}, poll.audience) : null,
+      poll.location ? el("div", {}, `場所: ${poll.location}`) : null,
+      poll.deadline ? el("div", {}, `回答締切: ${poll.deadline}`) : null));
+    if (poll.status === "decided") {
+      const c = poll.candidates.find((x) => x.candidate_id === poll.decided_candidate_id);
+      kids.push(el("div", { class: "banner" }, `日程が決まりました: ${c ? c.label : ""}`));
+    } else if (poll.status === "closed") {
+      kids.push(el("div", { class: "banner" }, "回答の受付は締め切られました。"));
+    }
+    if (flash) kids.push(el("div", { class: `toast ${flash.ok ? "ok" : "err"}` }, flash.text));
+
+    // あなたは
+    const who = el("div", { class: "card" }, el("h2", {}, "あなたは"));
+    if (me.linked) {
+      who.append(el("div", {}, me.member_name || me.display_name));
+    } else {
+      const sel = el("select", { id: "memberSel", disabled: !open || null,
+          onchange: (ev) => { chosen = ev.target.value; } },
+        el("option", { value: "" }, "選んでください"),
+        members.map((m) => el("option", { value: m.member_id, disabled: m.taken || null,
+          selected: m.member_id === chosen || null }, m.taken ? `${m.name}（回答済み）` : m.name)),
+        el("option", { value: "__other", selected: chosen === "__other" || null },
+          `一覧にない（LINE名「${me.display_name || ""}」で回答）`));
+      who.append(sel, el("div", { class: "hint" }, "初回だけ選んでください。次回からは自動で表示されます。"));
+    }
+    kids.push(who);
+
+    // 候補日
+    const cands = el("div", { class: "card" }, el("h2", {}, "候補日（○ 参加できる / △ 未定 / × 参加できない）"));
+    for (const c of poll.candidates) {
+      const n = counts[c.candidate_id] || {};
+      const row = el("div", { class: `cand${poll.decided_candidate_id === c.candidate_id ? " decided" : ""}` },
+        el("div", {}, el("div", { class: "label" }, c.label),
+          el("div", { class: "count" }, `○${n.ok || 0} △${n.maybe || 0} ×${n.ng || 0}`)),
+        el("div", { class: "choices" }, ["ok", "maybe", "ng"].map((a) => el("button", {
+          type: "button", class: a, "aria-pressed": answers[c.candidate_id] === a ? "true" : "false",
+          "aria-label": `${c.label} ${MARKS[a]}`, disabled: !open || null,
+          onclick: () => { answers[c.candidate_id] = a; render(); },
+        }, MARKS[a]))));
+      cands.append(row);
+    }
+    kids.push(cands);
+
+    // コメント
+    kids.push(el("div", { class: "card" }, el("h2", {}, "コメント（任意）"),
+      el("textarea", { id: "comment", maxlength: "200", placeholder: "例: 19:30 から参加できます", disabled: !open || null },
+        document.getElementById("comment")?.value ?? me.comment ?? "")));
+
+    // みんなの回答
+    const table = el("table", {},
+      el("tr", {}, el("th", {}, "名前"), poll.candidates.map((c) => el("th", {}, c.label.split(" ")[0]))),
+      responses.map((r) => el("tr", { class: r.is_me ? "me" : "" },
+        el("td", {}, r.name),
+        poll.candidates.map((c) => {
+          const a = r.answers[c.candidate_id];
+          return el("td", { class: a ? `mark-${a}` : "" }, a ? MARKS[a] : "");
+        }))),
+      responses.filter((r) => r.comment).map((r) =>
+        el("tr", {}, el("td", { class: "note", colspan: String(poll.candidates.length + 1) }, `${r.name}: ${r.comment}`))));
+    kids.push(el("div", { class: "card" }, el("h2", {}, `みんなの回答（${responses.length}人）`),
+      responses.length ? el("div", { class: "table" }, table) : el("div", { class: "meta" }, "まだ回答はありません。")));
+
+    app.replaceChildren(...kids);
+    bar.hidden = !open;
+  }
+
+  async function submit() {
+    const missing = state.poll.candidates.filter((c) => !answers[c.candidate_id]);
+    if (missing.length) { render({ ok: false, text: "すべての候補日に ○△× を付けてください。" }); return; }
+    const body = { answers, comment: document.getElementById("comment").value };
+    if (!state.me.linked) {
+      if (!chosen) { render({ ok: false, text: "「あなたは」を選んでください。" }); return; }
+      if (chosen !== "__other") body.member_id = chosen;
+    }
+    btn.disabled = true;
+    try {
+      state = await call("PUT", body);
+      render({ ok: true, text: "回答を保存しました。変更はいつでもできます。" });
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (e) {
+      render({ ok: false, text: e.message });
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  btn.addEventListener("click", submit);
+
+  (async () => {
+    try {
+      await liff.init({ liffId: LIFF_ID });
+      if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
+      pollId = findPollId();
+      if (!pollId) { fail("日程調整が指定されていません。案内のボタンから開いてください。"); return; }
+      state = await call("GET");
+      answers = { ...state.me.answers };
+      const answered = Object.keys(state.me.answers).length > 0;
+      chosen = state.me.member_id || (answered ? "__other" : "");
+      render();
+    } catch (e) {
+      fail(e.message || "読み込みに失敗しました。");
+    }
+  })();
+})();
+</script>
+</body>
+</html>
