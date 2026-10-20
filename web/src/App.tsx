@@ -4,6 +4,7 @@ const nav = [
   { to: "/", label: "ホーム", end: true },
   { to: "/members", label: "会員管理" },
   { to: "/events", label: "出欠管理" },
+  { to: "/polls", label: "日程調整" },
   { to: "/proposals", label: "議案" },
   { to: "/notices", label: "対外連絡" },
   { to: "/surveys", label: "アンケート" },

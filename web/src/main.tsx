@@ -6,6 +6,7 @@ import App from "./App";
 import Home from "./pages/Home";
 import Members from "./pages/Members";
 import Events from "./pages/Events";
+import Polls from "./pages/Polls";
 import Proposals from "./pages/Proposals";
 import Notices from "./pages/Notices";
 import Surveys from "./pages/Surveys";
@@ -23,6 +24,7 @@ const router = createBrowserRouter(
         { index: true, element: <Home /> },
         { path: "members", element: <Members /> },
         { path: "events", element: <Events /> },
+        { path: "polls", element: <Polls /> },
         { path: "proposals", element: <Proposals /> },
         { path: "notices", element: <Notices /> },
         { path: "surveys", element: <Surveys /> },

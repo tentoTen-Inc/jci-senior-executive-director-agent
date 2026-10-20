@@ -27,8 +27,10 @@ from .models import (
     MemberStatus,
     NoticeAction,
     PendingCalendarOp,
+    PollResponse,
     Proposal,
     ReminderPolicy,
+    SchedulePoll,
     Settings,
     Survey,
 )
@@ -121,6 +123,13 @@ class Repository(Protocol):
     def get_survey_by_form_id(self, form_id: str) -> Survey | None: ...
     def list_surveys(self, *, kind: str | None = None) -> list[Survey]: ...
 
+    # --- 日程調整 ---
+    def save_poll(self, poll: SchedulePoll) -> None: ...
+    def get_poll(self, poll_id: str) -> SchedulePoll | None: ...
+    def list_polls(self) -> list[SchedulePoll]: ...
+    def save_poll_response(self, response: PollResponse) -> None: ...
+    def list_poll_responses(self, poll_id: str) -> list[PollResponse]: ...
+
 
 class InMemoryRepository:
     """テスト・ローカル用のインメモリ実装。"""
@@ -147,6 +156,8 @@ class InMemoryRepository:
         self._conversations: dict[str, Conversation] = {}
         self._surveys: dict[str, Survey] = {}
         self._claimed_line_events: set[str] = set()
+        self._polls: dict[str, SchedulePoll] = {}
+        self._poll_responses: dict[str, PollResponse] = {}
 
     # --- members ---
     def upsert_member(self, member: Member) -> None:
@@ -390,6 +401,26 @@ class InMemoryRepository:
             items = [s for s in items if s.kind == kind]
         items.sort(key=lambda s: (s.synced_at or datetime.min), reverse=True)
         return [s.model_copy(deep=True) for s in items]
+
+    # --- 日程調整 ---
+    def save_poll(self, poll: SchedulePoll) -> None:
+        self._polls[poll.poll_id] = poll.model_copy(deep=True)
+
+    def get_poll(self, poll_id: str) -> SchedulePoll | None:
+        poll = self._polls.get(poll_id)
+        return poll.model_copy(deep=True) if poll else None
+
+    def list_polls(self) -> list[SchedulePoll]:
+        items = sorted(self._polls.values(), key=lambda p: p.created_at or datetime.min,
+                       reverse=True)
+        return [p.model_copy(deep=True) for p in items]
+
+    def save_poll_response(self, response: PollResponse) -> None:
+        self._poll_responses[response.doc_id] = response.model_copy(deep=True)
+
+    def list_poll_responses(self, poll_id: str) -> list[PollResponse]:
+        return [r.model_copy(deep=True) for r in self._poll_responses.values()
+                if r.poll_id == poll_id]
 
 
 def utcnow() -> datetime:
