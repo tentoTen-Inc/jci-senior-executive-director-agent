@@ -22,8 +22,8 @@ const RECORDS: NavItem[] = [
 ];
 
 type HomeCounts = {
-  action_required: { open_escalations: number; link_requests: number };
-  polls: unknown[];
+  action_required: { open_escalations: number; link_requests?: number };
+  polls?: unknown[];
 };
 
 function useCounts(): Counts | null {
@@ -34,9 +34,9 @@ function useCounts(): Counts | null {
       .then((h) => {
         const a = h.action_required;
         setCounts({
-          home: a.open_escalations + a.link_requests,
-          polls: h.polls.length,
-          members: a.link_requests,
+          home: a.open_escalations + (a.link_requests ?? 0),
+          polls: h.polls?.length ?? 0,
+          members: a.link_requests ?? 0,
         });
       })
       .catch(() => {});

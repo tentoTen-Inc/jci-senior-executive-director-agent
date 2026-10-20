@@ -102,6 +102,8 @@ def test_home_agenda_includes_drafts_and_open_polls():
         target_scope=TargetScope(kind=TargetScopeKind.custom, value=["m1", "m2"])))
     repo.save_poll_response(PollResponse(poll_id="p1", line_user_id="U1", member_id="m1",
                                          answers={"c1": PollAnswer.ng, "c2": PollAnswer.ok}))
+    repo.save_poll_response(PollResponse(poll_id="p1", line_user_id="U2", member_id="m2",
+                                         answers={"c1": PollAnswer.ok, "c2": PollAnswer.maybe}))
     repo.save_link_request(LinkRequest(line_user_id="U9", member_id="m2"))
 
     h = build_home(repo, now=NOW)
@@ -109,6 +111,6 @@ def test_home_agenda_includes_drafts_and_open_polls():
     assert "27【対外】渡部邦/遠藤孝 会員会議所会議" in titles  # 下書き・年度前置つき
     assert "中止の例会" not in titles and "遠い例会" not in titles
     poll, = h.polls
-    assert (poll.answered, poll.targets) == (1, 2)
-    assert poll.leading == "11/6(金) 19:00〜"
+    assert (poll.answered, poll.targets) == (2, 2)
+    assert poll.leading == "11/6(金) 19:00〜"  # ○は同数（1）なので×の少ない 11/6
     assert h.action_required.link_requests == 1

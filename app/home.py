@@ -135,10 +135,15 @@ def _poll_brief(repo: Repository, poll) -> PollBrief:
     from .schedule_poll import candidate_label, summary  # 循環 import を避ける
 
     data = summary(repo, poll)
-    ok = {cid: c["ok"] for cid, c in data["counts"].items()}
+    counts = data["counts"]
     leading = None
-    if ok and max(ok.values()) > 0:
-        best = max(poll.candidates, key=lambda c: (ok.get(c.candidate_id, 0), -c.start.timestamp()))
+    if any(c["ok"] for c in counts.values()):
+        # ○が多い → ×が少ない → △が多い → 日付が早い（日程調整の画面と同じ順）
+        def score(c):
+            n = counts.get(c.candidate_id, {"ok": 0, "maybe": 0, "ng": 0})
+            return (n["ok"], -n["ng"], n["maybe"], -c.start.timestamp())
+
+        best = max(poll.candidates, key=score)
         leading = candidate_label(best.start, best.end)
     return PollBrief(poll_id=poll.poll_id, title=poll.title,
                      answered=len(data["rows"]) - len(data["pending"]),

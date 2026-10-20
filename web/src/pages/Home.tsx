@@ -94,7 +94,10 @@ export default function Home() {
   const [err, setErr] = useState<string | null>(null);
 
   const load = () => {
-    api<HomeData>("/home").then(setData).catch((e) => setErr(e.message));
+    api<HomeData>("/home")
+      // 古いサーバー（agenda・polls が無い）でも表示できるようにする
+      .then((h) => setData({ ...h, agenda: h.agenda ?? [], polls: h.polls ?? [] }))
+      .catch((e) => setErr(e.message));
     api<Escalation[]>("/escalations?status=open").then(setEscalations).catch(() => {});
     api<LinkData>("/line-link").then(setLinks).catch(() => {});
   };
