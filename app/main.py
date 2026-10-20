@@ -42,7 +42,7 @@ from linebot.v3.webhooks import (
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import ai_feedback, config, file_links, gmail, lake, line_push, line_worker
+from . import ai_feedback, config, file_links, gmail, lake, line_link, line_push, line_worker
 from . import lake_api as lake_api_module
 from .admin_api import router as admin_router
 from .calendar_import import pull_changes
@@ -56,6 +56,8 @@ from .lake_api import router as lake_router
 from .lake_knowledge import index_knowledge
 from .lake_maintenance import redact_unsent
 from .line_messages import apply_postback, build_attendance_request
+from .link_api import public_router as liff_link_router
+from .link_api import router as link_router
 from .logging_setup import configure_logging
 from .member_menu import build_menu, handle_member_text
 from .notice_actions import ACTION_NOTICE_DONE, handle_done_postback
@@ -106,6 +108,8 @@ app.include_router(surveys_router, prefix="/api")
 app.include_router(lake_router, prefix="/api")  # LINEグループ（データレイク）
 app.include_router(polls_router, prefix="/api")  # 日程調整（管理）
 app.include_router(liff_router)  # 日程調整の LIFF 画面（公開・LINE ログインで本人確認）
+app.include_router(link_router, prefix="/api")  # LINE 連携の申請・予約投稿（管理）
+app.include_router(liff_link_router)  # LINE 連携の申請（LIFF・公開）
 
 
 @app.get("/dashboard", include_in_schema=False)
@@ -377,6 +381,8 @@ def handle_postback(user_id: str, data: str) -> list[Message]:
         return ai_feedback.handle_feedback_postback(member, data)
     if data.startswith(f"{ACTION_NOTICE_DONE}|"):
         return handle_done_postback(repo, member.member_id, data)
+    if data.startswith(f"{line_link.ACTION_LINK}|"):
+        return line_link.handle_postback(repo, member, data, now=datetime.now())
     return apply_postback(repo, member, data, now=datetime.now())
 
 
@@ -417,6 +423,12 @@ def tasks_tick():
     """
     repo = get_repo()
     now = datetime.now()
+    # 予約投稿は時刻どおりに出したいので最初に送る（後続の取込が遅くても遅れない）
+    try:
+        posts_result = line_link.send_due_posts(repo, now)
+    except Exception:  # noqa: BLE001 - 催促処理を巻き込まない
+        logger.exception("予約投稿の処理に失敗しました")
+        posts_result = {"error": "posts_failed"}
     gmail_result = _tick_gmail_import(repo, now)
     gcal_result = _tick_gcal(repo, now)
     lake_result = {"redact": redact_unsent(), "knowledge": index_knowledge()}
@@ -444,7 +456,7 @@ def tasks_tick():
         )
     return {
         "planned": len(jobs), "results": results, "gmail": gmail_result, "gcal": gcal_result,
-        "lake": lake_result,
+        "lake": lake_result, "posts": posts_result,
     }
 
 
