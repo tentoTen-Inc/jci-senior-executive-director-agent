@@ -65,11 +65,31 @@ def test_resolve_audience_unanswered():
     assert set(ids) == {"m2", "m3"}
 
 
-def test_plan_reminders_due_stages():
+def test_plan_reminders_sends_only_latest_due_stage():
+    """過ぎた段階をまとめて送らない。依頼・リマインドが両方 due ならリマインドだけ。"""
     repo = setup_repo()
     now = DEADLINE - timedelta(days=2)  # 依頼/リマインドが due
     jobs = plan_reminders(repo, now)
-    assert {j.stage for j in jobs} == {"依頼", "リマインド"}
+    assert {j.stage for j in jobs} == {"リマインド"}
+
+
+def test_no_reminders_for_events_already_started():
+    """受付中のまま残った過去の予定に、後から連携した会員へ出欠確認を送らない（2026-10-21）。"""
+    repo = setup_repo()
+    after_start = datetime(2026, 6, 25, 19, 0)
+    assert plan_reminders(repo, after_start) == []
+    assert plan_reminders(repo, datetime(2026, 10, 21, 8, 0)) == []
+
+
+def test_late_linked_member_gets_only_latest_stage():
+    """依頼を送ったあとに連携した人には、過ぎた依頼ではなく今の段階だけを送る。"""
+    repo = setup_repo()
+    t_req = datetime(2026, 6, 19, 12, 0)
+    job = plan_reminders(repo, t_req)[0]
+    execute_delivery(repo, job, "出欠依頼", now=t_req, sender=lambda mid: True)
+    repo.upsert_member(Member(member_id="m4", name="m4", line_user_id="U_m4"))  # 後から連携
+    jobs = plan_reminders(repo, DEADLINE - timedelta(hours=12))  # 依頼・リマインド・最終が due
+    assert [(j.stage, j.targets) for j in jobs] == [("最終", ["m1", "m2", "m3", "m4"])]
 
 
 def test_member_level_idempotent_after_ok_send():
