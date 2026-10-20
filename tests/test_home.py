@@ -74,3 +74,41 @@ def test_home_endpoint(_wire):
     body = res.json()
     assert body["member_count"] == 2
     assert body["upcoming_events"][0]["title"] == "6月例会"
+
+
+def test_home_agenda_includes_drafts_and_open_polls():
+    """ホームの「今後2週間」は下書きも含め（中止は除く）、受付中の日程調整と連携の承認待ちも出す。"""
+    from app.models import (
+        LinkRequest,
+        PollAnswer,
+        PollCandidate,
+        PollResponse,
+        SchedulePoll,
+    )
+
+    repo = build_repo()
+    repo.upsert_event(Event(event_id="d1", type=EventType.対外,
+                            title="渡部邦/遠藤孝 会員会議所会議",
+                            datetime_start=NOW + timedelta(days=3), status=EventStatus.draft,
+                            fiscal_year=2027))
+    repo.upsert_event(Event(event_id="c1", type=EventType.例会, title="中止の例会",
+                            datetime_start=NOW + timedelta(days=4), status=EventStatus.cancelled))
+    repo.upsert_event(Event(event_id="f1", type=EventType.例会, title="遠い例会",
+                            datetime_start=NOW + timedelta(days=30), status=EventStatus.draft))
+    repo.save_poll(SchedulePoll(
+        poll_id="p1", title="第2回五役予定者会議", event_type=EventType.五役会, group_id="G",
+        candidates=[PollCandidate(candidate_id="c1", start=datetime(2026, 11, 5, 19)),
+                    PollCandidate(candidate_id="c2", start=datetime(2026, 11, 6, 19))],
+        target_scope=TargetScope(kind=TargetScopeKind.custom, value=["m1", "m2"])))
+    repo.save_poll_response(PollResponse(poll_id="p1", line_user_id="U1", member_id="m1",
+                                         answers={"c1": PollAnswer.ng, "c2": PollAnswer.ok}))
+    repo.save_link_request(LinkRequest(line_user_id="U9", member_id="m2"))
+
+    h = build_home(repo, now=NOW)
+    titles = [a.title for a in h.agenda]
+    assert "27【対外】渡部邦/遠藤孝 会員会議所会議" in titles  # 下書き・年度前置つき
+    assert "中止の例会" not in titles and "遠い例会" not in titles
+    poll, = h.polls
+    assert (poll.answered, poll.targets) == (1, 2)
+    assert poll.leading == "11/6(金) 19:00〜"
+    assert h.action_required.link_requests == 1
