@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import {
@@ -84,6 +84,23 @@ function byDay(items: AgendaItem[]): [string, AgendaItem[]][] {
     map.set(key, [...(map.get(key) ?? []), it]);
   }
   return [...map.entries()];
+}
+
+/** 対応が必要な1件。PC では1行、狭い画面では折り返して読みやすく並ぶ。 */
+function TodoRow({ badge, name, detail, when, action }: {
+  badge: React.ReactNode; name: string; detail: string; when: string | null; action: React.ReactNode;
+}) {
+  return (
+    <li className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-3">
+      <div className="w-full sm:w-52 sm:shrink-0">{badge}</div>
+      <div className="min-w-0 flex-1">
+        <div className="font-bold">{name}</div>
+        <div className="truncate text-xs text-ink-sub" title={detail}>{detail}</div>
+      </div>
+      {when && <div className="num whitespace-nowrap text-xs text-ink-sub">{when}</div>}
+      <div>{action}</div>
+    </li>
+  );
 }
 
 export default function Home() {
@@ -181,35 +198,28 @@ export default function Home() {
           {todoCount === 0 ? (
             <div className="px-5 pb-3"><EmptyState title="対応が必要なものはありません" /></div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="tbl">
-                <thead><tr><th>内容</th><th>相手</th><th>受付</th><th /></tr></thead>
-                <tbody>
-                  {linkRows.map((r) => (
-                    <tr key={r.line_user_id}>
-                      <td className="whitespace-nowrap"><Badge tone="green">LINE 連携</Badge></td>
-                      <td>
-                        <div className="font-bold">{r.member_name}</div>
-                        <div className="text-xs text-ink-sub">LINE名: {r.display_name ?? "（なし）"}{r.source ? `・${r.source}` : ""}</div>
-                      </td>
-                      <td className="num whitespace-nowrap text-ink-sub">{r.requested_at ? fmtDateTime(r.requested_at) : "—"}</td>
-                      <td className="text-right"><Button size="sm" variant="primary" onClick={() => approve(r)}>承認</Button></td>
-                    </tr>
-                  ))}
-                  {escalations.map((e) => (
-                    <tr key={e.escalation_id}>
-                      <td className="whitespace-nowrap"><Badge tone="amber">{e.kind === "question" ? "AI が答えられなかった質問" : e.kind === "contact" ? "連絡希望" : "その他"}</Badge></td>
-                      <td>
-                        <div className="font-bold">{e.member_name ?? "会員"}</div>
-                        <div className="text-xs text-ink-sub">「{e.text ?? "（内容なし）"}」</div>
-                      </td>
-                      <td className="num whitespace-nowrap text-ink-sub">{fmtDateTime(e.created_at)}</td>
-                      <td className="text-right"><Button size="sm" onClick={() => handled(e)}>対応済み</Button></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <ul className="divide-y divide-gray-100 px-2">
+              {linkRows.map((r) => (
+                <TodoRow
+                  key={r.line_user_id}
+                  badge={<Badge tone="green">LINE 連携</Badge>}
+                  name={r.member_name ?? "会員"}
+                  detail={`LINE名: ${r.display_name ?? "（なし）"}${r.source ? `・${r.source}` : ""}`}
+                  when={r.requested_at ? fmtDateTime(r.requested_at) : null}
+                  action={<Button size="sm" variant="primary" onClick={() => approve(r)}>承認</Button>}
+                />
+              ))}
+              {escalations.map((e) => (
+                <TodoRow
+                  key={e.escalation_id}
+                  badge={<Badge tone="amber">{e.kind === "question" ? "AI が答えられなかった質問" : e.kind === "contact" ? "連絡希望" : "その他"}</Badge>}
+                  name={e.member_name ?? "会員"}
+                  detail={`「${e.text ?? "（内容なし）"}」`}
+                  when={fmtDateTime(e.created_at)}
+                  action={<Button size="sm" onClick={() => handled(e)}>対応済み</Button>}
+                />
+              ))}
+            </ul>
           )}
         </Panel>
 
