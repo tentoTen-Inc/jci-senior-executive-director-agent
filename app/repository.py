@@ -22,6 +22,7 @@ from .models import (
     InferenceLog,
     InviteCode,
     LineGroup,
+    LinkRequest,
     LinkState,
     Member,
     MemberStatus,
@@ -30,6 +31,7 @@ from .models import (
     PollResponse,
     Proposal,
     ReminderPolicy,
+    ScheduledPost,
     SchedulePoll,
     Settings,
     Survey,
@@ -130,6 +132,13 @@ class Repository(Protocol):
     def save_poll_response(self, response: PollResponse) -> None: ...
     def list_poll_responses(self, poll_id: str) -> list[PollResponse]: ...
 
+    # --- LINE 連携の申請・予約投稿 ---
+    def save_link_request(self, request: LinkRequest) -> None: ...
+    def get_link_request(self, line_user_id: str) -> LinkRequest | None: ...
+    def list_link_requests(self) -> list[LinkRequest]: ...
+    def save_scheduled_post(self, post: ScheduledPost) -> None: ...
+    def list_scheduled_posts(self) -> list[ScheduledPost]: ...
+
 
 class InMemoryRepository:
     """テスト・ローカル用のインメモリ実装。"""
@@ -158,6 +167,8 @@ class InMemoryRepository:
         self._claimed_line_events: set[str] = set()
         self._polls: dict[str, SchedulePoll] = {}
         self._poll_responses: dict[str, PollResponse] = {}
+        self._link_requests: dict[str, LinkRequest] = {}
+        self._scheduled_posts: dict[str, ScheduledPost] = {}
 
     # --- members ---
     def upsert_member(self, member: Member) -> None:
@@ -421,6 +432,24 @@ class InMemoryRepository:
     def list_poll_responses(self, poll_id: str) -> list[PollResponse]:
         return [r.model_copy(deep=True) for r in self._poll_responses.values()
                 if r.poll_id == poll_id]
+
+    # --- LINE 連携の申請・予約投稿 ---
+    def save_link_request(self, request: LinkRequest) -> None:
+        self._link_requests[request.line_user_id] = request.model_copy(deep=True)
+
+    def get_link_request(self, line_user_id: str) -> LinkRequest | None:
+        request = self._link_requests.get(line_user_id)
+        return request.model_copy(deep=True) if request else None
+
+    def list_link_requests(self) -> list[LinkRequest]:
+        return [r.model_copy(deep=True) for r in self._link_requests.values()]
+
+    def save_scheduled_post(self, post: ScheduledPost) -> None:
+        self._scheduled_posts[post.post_id] = post.model_copy(deep=True)
+
+    def list_scheduled_posts(self) -> list[ScheduledPost]:
+        return sorted((p.model_copy(deep=True) for p in self._scheduled_posts.values()),
+                      key=lambda p: p.send_at)
 
 
 def utcnow() -> datetime:

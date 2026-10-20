@@ -21,6 +21,7 @@ from .models import (
     InferenceLog,
     InviteCode,
     LineGroup,
+    LinkRequest,
     LinkState,
     Member,
     MemberStatus,
@@ -29,6 +30,7 @@ from .models import (
     PollResponse,
     Proposal,
     ReminderPolicy,
+    ScheduledPost,
     SchedulePoll,
     Settings,
     Survey,
@@ -56,6 +58,8 @@ COL_CONVERSATIONS = "conversations"
 COL_SURVEYS = "surveys"
 COL_POLLS = "schedulePolls"
 COL_POLL_RESPONSES = "pollResponses"
+COL_LINK_REQUESTS = "lineLinkRequests"
+COL_SCHEDULED_POSTS = "scheduledPosts"
 COL_LINE_EVENT_CLAIMS = "lineEventClaims"  # TTL（expire_at）で自動削除
 LINE_EVENT_CLAIM_TTL = timedelta(days=7)  # LINE の再送・Pub/Sub の保持（7日）より長く
 SETTINGS_DOC = "global"
@@ -394,3 +398,27 @@ class FirestoreRepository:
     def list_poll_responses(self, poll_id: str) -> list[PollResponse]:
         query = self._db.collection(COL_POLL_RESPONSES).where("poll_id", "==", poll_id)
         return [PollResponse.model_validate(d.to_dict()) for d in query.stream()]
+
+    # --- LINE 連携の申請・予約投稿 ---
+    def save_link_request(self, request: LinkRequest) -> None:
+        self._db.collection(COL_LINK_REQUESTS).document(request.line_user_id).set(
+            request.model_dump(mode="json")
+        )
+
+    def get_link_request(self, line_user_id: str) -> LinkRequest | None:
+        snap = self._db.collection(COL_LINK_REQUESTS).document(line_user_id).get()
+        return LinkRequest.model_validate(snap.to_dict()) if snap.exists else None
+
+    def list_link_requests(self) -> list[LinkRequest]:
+        return [LinkRequest.model_validate(d.to_dict())
+                for d in self._db.collection(COL_LINK_REQUESTS).stream()]
+
+    def save_scheduled_post(self, post: ScheduledPost) -> None:
+        self._db.collection(COL_SCHEDULED_POSTS).document(post.post_id).set(
+            post.model_dump(mode="json")
+        )
+
+    def list_scheduled_posts(self) -> list[ScheduledPost]:
+        return sorted((ScheduledPost.model_validate(d.to_dict())
+                       for d in self._db.collection(COL_SCHEDULED_POSTS).stream()),
+                      key=lambda p: p.send_at)

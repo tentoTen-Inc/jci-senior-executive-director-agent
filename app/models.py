@@ -687,3 +687,46 @@ class PollResponse(BaseModel):
     @property
     def doc_id(self) -> str:
         return f"{self.poll_id}_{self.line_user_id}"
+
+
+# --------------------------------------------------------------------------- #
+# LINE 連携の申請（LIFF）と予約投稿（docs/line-link-design.md）
+# --------------------------------------------------------------------------- #
+class LinkRequestStatus(StrEnum):
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+
+
+class LinkRequest(BaseModel):
+    """LIFF で「私はこの会員です」と申請したもの。専務が承認すると Member.line_user_id に入る。"""
+
+    line_user_id: str
+    display_name: str | None = None  # LINE の表示名（承認時の確認用）
+    member_id: str
+    status: LinkRequestStatus = LinkRequestStatus.pending
+    requested_at: datetime | None = None
+    decided_at: datetime | None = None
+    decided_by: str | None = None
+
+
+class ScheduledPostStatus(StrEnum):
+    pending = "pending"
+    sent = "sent"
+    failed = "failed"
+    cancelled = "cancelled"
+
+
+class ScheduledPost(BaseModel):
+    """指定時刻にグループへ送る投稿（tick が送る。早朝・深夜に送らないため）。"""
+
+    post_id: str
+    group_id: str
+    kind: str  # link_invite（LINE 連携のお願い） | poll_announce（日程調整の案内）
+    poll_id: str | None = None  # kind=poll_announce のとき
+    send_at: datetime
+    status: ScheduledPostStatus = ScheduledPostStatus.pending
+    sent_at: datetime | None = None
+    error: str | None = None
+    created_at: datetime | None = None
+    created_by: str | None = None

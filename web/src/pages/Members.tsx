@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { Card } from "../components/Card";
+import { LinkRequests } from "../components/LinkRequests";
 
 type Row = {
   member_id: string;
@@ -160,6 +161,7 @@ export default function Members() {
   return (
     <div>
       <h1 className="text-lg font-semibold text-navy mb-3">会員管理</h1>
+      <LinkRequests />
       {msg && <div className="mb-2 text-sm text-brand">{msg}</div>}
 
       <Card>

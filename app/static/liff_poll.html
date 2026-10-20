@@ -3,8 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>日程調整</title>
-<!-- 日程調整の LIFF 画面（docs/schedule-poll-design.md）。__LIFF_ID__ はサーバーが埋め込む -->
+<title>猪苗代専務AI</title>
+<!-- LIFF 画面: 日程調整（?poll=…, docs/schedule-poll-design.md）と LINE 連携（?link=1, docs/line-link-design.md）。
+     __LIFF_ID__ はサーバーが埋め込む -->
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <style>
   :root { --brand: #06c755; --ink: #1f2937; --sub: #6b7280; --line: #e5e7eb; --bg: #f7f7f8;
@@ -90,13 +91,80 @@
     app.replaceChildren(el("div", { class: "toast err" }, message));
   }
 
-  function findPollId() {
+  function param(name) {
     const params = new URLSearchParams(location.search);
-    if (params.get("poll")) return params.get("poll");
+    if (params.get(name)) return params.get(name);
     // LIFF の初回リダイレクトでは liff.state に元のクエリが入る
     const st = params.get("liff.state");
-    if (st) return new URLSearchParams(st.replace(/^[^?]*\?/, "")).get("poll");
+    if (st) return new URLSearchParams(st.replace(/^[^?]*\?/, "")).get(name);
     return null;
+  }
+  const findPollId = () => param("poll");
+
+  // ---- LINE 連携（?link=1。docs/line-link-design.md）----
+  async function callLink(method, body) {
+    const res = await fetch("/liff/api/link", {
+      method,
+      headers: { "Authorization": `Bearer ${liff.getIDToken()}`, "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) { liff.logout(); liff.login({ redirectUri: location.href }); throw new Error("再ログインします…"); }
+    if (!res.ok) throw new Error(data.detail || `エラーが発生しました（${res.status}）`);
+    return data;
+  }
+
+  async function linkFlow() {
+    document.title = "LINE 連携";
+    let view = await callLink("GET");
+    let friend = true;
+    try { friend = (await liff.getFriendship()).friendFlag; } catch (e) { /* 取得できなければ表示しない */ }
+    let picked = "";
+    const draw = (flash) => {
+      const kids = [el("div", { class: "meta" }, "猪苗代専務AI"), el("h1", {}, "LINE 連携")];
+      if (flash) kids.push(el("div", { class: `toast ${flash.ok ? "ok" : "err"}` }, flash.text));
+      if (view.status === "linked") {
+        kids.push(el("div", { class: "card" }, el("h2", {}, "連携済みです"),
+          el("div", {}, `${view.member_name} さんとして連携されています。`)));
+      } else if (view.status === "pending") {
+        kids.push(el("div", { class: "card" }, el("h2", {}, "承認待ちです"),
+          el("div", {}, `${view.member_name} さんとして申請しました。専務が確認すると連携が完了します。`),
+          el("div", { class: "hint" }, "名前を間違えた場合は、下から選び直して申請し直せます。")));
+      } else {
+        kids.push(el("div", { class: "card" },
+          el("h2", {}, "あなたのお名前を選んでください"),
+          el("div", { class: "meta" }, `LINE の表示名: ${view.display_name || ""}`)));
+      }
+      if (view.status !== "linked") {
+        const sel = el("select", { onchange: (ev) => { picked = ev.target.value; } },
+          el("option", { value: "" }, "選んでください"),
+          view.members.map((m) => el("option", { value: m.member_id, disabled: m.taken || null,
+            selected: m.member_id === picked || null }, m.taken ? `${m.name}（申請中）` : m.name)));
+        kids.push(el("div", { class: "card" }, sel,
+          el("div", { class: "hint" }, "一覧に名前がない場合は、事務局（専務）にご連絡ください。")));
+      }
+      if (!friend) {
+        kids.push(el("div", { class: "card" }, el("h2", {}, "友だち追加もお願いします"),
+          el("div", { class: "meta" }, "個別トークでお知らせを受け取るために、猪苗代専務AI を友だちに追加してください。"),
+          el("a", { href: view.friend_url, style: "display:block;margin-top:10px;color:var(--brand);font-weight:700" }, "＋ 友だち追加する")));
+      }
+      app.replaceChildren(...kids);
+      bar.hidden = view.status === "linked";
+      btn.textContent = view.status === "pending" ? "この名前で申請し直す" : "この名前で申請する";
+    };
+    btn.onclick = async () => {
+      if (!picked) { draw({ ok: false, text: "お名前を選んでください。" }); return; }
+      btn.disabled = true;
+      try {
+        view = await callLink("POST", { member_id: picked });
+        draw({ ok: true, text: "申請しました。専務の確認後に連携が完了します。" });
+      } catch (e) {
+        draw({ ok: false, text: e.message });
+      } finally {
+        btn.disabled = false;
+      }
+    };
+    draw();
   }
 
   async function call(method, body) {
@@ -204,12 +272,13 @@
     }
   }
 
-  btn.addEventListener("click", submit);
+  btn.onclick = submit;
 
   (async () => {
     try {
       await liff.init({ liffId: LIFF_ID });
       if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
+      if (param("link")) { await linkFlow(); return; }
       pollId = findPollId();
       if (!pollId) { fail("日程調整が指定されていません。案内のボタンから開いてください。"); return; }
       state = await call("GET");
