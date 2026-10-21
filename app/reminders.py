@@ -107,10 +107,19 @@ def plan_reminders(repo: Repository, now: datetime) -> list[DeliveryJob]:
     for event in repo.list_events(status=EventStatus.open):
         if not event.reminder_policy_id:
             continue
+        # 始まった（終わった）会議の出欠は聞かない。受付中のまま残った過去の予定に、
+        # あとから LINE 連携した会員へ古い出欠確認が届いた（2026-10-21 本番）
+        if event.datetime_start <= now:
+            continue
         policy = repo.get_policy(event.reminder_policy_id)
         if policy is None:
             continue
-        for stage in due_stages(policy, event, now):
+        # 過ぎた段階をまとめて送らない（遅れて対象になった人＝後から LINE 連携した人などに、
+        # 依頼・リマインド・最終が一度に届いた）。いま一番新しい段階だけを送る。
+        due = sorted(due_stages(policy, event, now), key=lambda s: fire_time(event, s))
+        if not due:
+            continue
+        for stage in due[-1:]:
             audience = resolve_audience(repo, event, stage.audience)
             already = sent_member_ids(repo, event.event_id, stage.name)
             targets = [mid for mid in audience if mid not in already]
