@@ -13,7 +13,7 @@
 |---|---|
 | Cloud Run | `jci-sed-agent`（asia-northeast1）/ 実行SA `app-runtime@…` |
 | データ | Firestore (Native) |
-| 定期実行 | Cloud Scheduler `jci-tick`（毎時8–21時JST）→ `POST /tasks/tick` |
+| 定期実行 | Cloud Scheduler `jci-tick`（毎時8–21時JST、待ち時間 300 秒＝Cloud Run の上限と同じ）→ `POST /tasks/tick`。予約投稿・催促を先に送り、ドライブ取込・索引は最後 |
 | シークレット | Secret Manager: `line-channel-secret` / `line-channel-access-token` / `admin-api-secret` |
 | LINE | 公式アカウント（Channel ID 2010454434）。Webhook 登録済み |
 | 管理 | SPA `/app`（IAP・管理サービス `jci-sed-admin`）＋ `/api/*`・`/admin/*`（IAP または `X-Admin-Token`） |
