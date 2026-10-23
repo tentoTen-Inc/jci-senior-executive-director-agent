@@ -1,6 +1,6 @@
 # ドライブの資料を専務AIのナレッジにする 詳細設計 v1.0
 
-最終更新: 2026-10-23
+最終更新: 2026-10-23（v1.1: tick の期限超過への対応）
 前提: データレイク `docs/datalake-design.md`、LINE 資料の検索 `docs/lake-ai-design.md`（P6-4a）、ドライブの権限借用 `docs/drive-impersonation-verification.md`
 
 ## 1. 目的
@@ -12,8 +12,8 @@
 tick（毎時）
   └ drive_knowledge.sync()
        対象フォルダを再帰的にたどる → 除外ルールを適用
-       → 更新日時が変わったファイルだけ本文を取り出す（1回 40 件まで、残りは次回）
-       → BigQuery line_lake.drive_documents に MERGE／ドライブから消えたものは DELETE
+       → 更新日時が変わったファイルだけ本文を取り出す（1回 40 件・60 秒まで、残りは次回）
+       → BigQuery line_lake.drive_documents にまとめて1回で MERGE／ドライブから消えたものは DELETE
   └ lake_knowledge.index_knowledge()
        drive_documents を knowledge_chunks に分割・ベクトル化（LINE の資料と同じ処理）
 会員の質問
@@ -40,6 +40,7 @@ tick（毎時）
 - **見せる範囲**: パスに「執行部・五役会」を含む資料は `officers`。理事長・副理事長・専務理事・監事・直前理事長の質問にだけ使う。それ以外は会員全員。
 - ドライブは `drive-reader` サービスアカウント（`drive.readonly`）の権限借用で読む。書き込みはしない。
 - 取込の失敗は tick を止めない（`{"error": "drive_sync_failed"}` を返してログに残す）。
+- tick では予約投稿・催促を先に送り、取込・索引は最後に行う。tick 全体を Cloud Scheduler の期限（180 秒）内に収めるため、本文の取り出しは 60 秒で打ち切り、書き込みは1回の DML にまとめる（1件ずつの DML は1件数秒かかり、40 件で期限を超えた）。
 - 回答に使った資料は出典としてファイル名・更新日・リンクを付ける。リンクを開けるかどうかはドライブ側の共有設定に従う。
 
 ## 5. 設定

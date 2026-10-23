@@ -441,9 +441,6 @@ def tasks_tick():
         posts_result = {"error": "posts_failed"}
     gmail_result = _tick_gmail_import(repo, now)
     gcal_result = _tick_gcal(repo, now)
-    # ドライブの資料を取り込んでから索引する（同じ tick で新しい資料も検索できるように）
-    lake_result = {"redact": redact_unsent(), "drive": drive_knowledge.sync(),
-                   "knowledge": index_knowledge()}
     jobs = plan_reminders(repo, now)
     results = []
     for job in jobs:
@@ -466,6 +463,10 @@ def tasks_tick():
                 "halted": report.halted,
             }
         )
+    # 取込・索引は時間がかかるので、会員に届く催促を送り終えてから行う。
+    # ドライブの資料を取り込んでから索引する（同じ tick で新しい資料も検索できるように）
+    lake_result = {"redact": redact_unsent(), "drive": drive_knowledge.sync(),
+                   "knowledge": index_knowledge()}
     return {
         "planned": len(jobs), "results": results, "gmail": gmail_result, "gcal": gcal_result,
         "lake": lake_result, "posts": posts_result,
