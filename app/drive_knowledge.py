@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import re
+import time
 import urllib.parse
 from datetime import UTC, datetime
 
@@ -32,6 +33,7 @@ GOOGLE_SLIDES = "application/vnd.google-apps.presentation"
 PDF = "application/pdf"
 TEXT_LIMIT = 40000  # 1ファイルあたりの本文の上限（文字）
 SYNC_BATCH = 40  # 1回の tick で本文を取り直すファイル数の上限（残りは次回）
+SYNC_SECONDS = 60  # 本文の取り出しに使う時間の上限（tick 全体を Scheduler の期限内に収める）
 
 #: 取り込まないもの（個人情報）。フォルダ名・ファイル名のどちらかに含まれていたら除外
 EXCLUDE_PATTERNS = re.compile(r"名簿|住所録|入会|認承証|個人情報|事務局")
@@ -140,13 +142,17 @@ def _extract(f: dict, token: str) -> str | None:
 # --------------------------------------------------------------------------- #
 UPSERT_SQL = """
 MERGE {table} AS t
-USING (SELECT @file_id AS file_id) AS s
+USING (
+  SELECT file_id, @titles[OFFSET(i)] AS title, @paths[OFFSET(i)] AS path,
+         @mime_types[OFFSET(i)] AS mime_type, TIMESTAMP(@modified_ats[OFFSET(i)]) AS modified_at,
+         @accesses[OFFSET(i)] AS access, @texts[OFFSET(i)] AS text
+  FROM UNNEST(@file_ids) AS file_id WITH OFFSET i
+) AS s
 ON t.file_id = s.file_id
-WHEN MATCHED THEN UPDATE SET title = @title, path = @path, mime_type = @mime_type,
-  modified_at = TIMESTAMP(@modified_at), access = @access, text = @text,
-  synced_at = CURRENT_TIMESTAMP()
+WHEN MATCHED THEN UPDATE SET title = s.title, path = s.path, mime_type = s.mime_type,
+  modified_at = s.modified_at, access = s.access, text = s.text, synced_at = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN INSERT (file_id, title, path, mime_type, modified_at, access, text, synced_at)
-  VALUES (@file_id, @title, @path, @mime_type, TIMESTAMP(@modified_at), @access, @text,
+  VALUES (s.file_id, s.title, s.path, s.mime_type, s.modified_at, s.access, s.text,
           CURRENT_TIMESTAMP())
 """
 
@@ -173,16 +179,25 @@ def sync() -> dict | None:
         files = [f for f in crawl(token) if not excluded(f["path"], f["name"])]
         known = _known()
         changed = [f for f in files if known.get(f["id"]) != _norm(f["modifiedTime"])]
-        added = 0
+        rows: list[tuple[dict, str]] = []
+        started = time.monotonic()
         for f in changed[:SYNC_BATCH]:
+            if time.monotonic() - started > SYNC_SECONDS:
+                break
             # 本文が取れない種類（画像・Word 等）も記録して、毎回取り直さないようにする
-            text = (_extract(f, token) or "").strip()
+            rows.append((f, (_extract(f, token) or "").strip()[:TEXT_LIMIT]))
+        if rows:
+            # 1件ずつの DML は数秒かかるので、まとめて1回で書く
             lake_query.execute(UPSERT_SQL.format(table=_table()), {
-                "file_id": f["id"], "title": f["name"], "path": f["path"],
-                "mime_type": f["mimeType"], "modified_at": f["modifiedTime"],
-                "access": access_for(f["path"]), "text": text[:TEXT_LIMIT],
+                "file_ids": [f["id"] for f, _ in rows],
+                "titles": [f["name"] for f, _ in rows],
+                "paths": [f["path"] for f, _ in rows],
+                "mime_types": [f["mimeType"] for f, _ in rows],
+                "modified_ats": [f["modifiedTime"] for f, _ in rows],
+                "accesses": [access_for(f["path"]) for f, _ in rows],
+                "texts": [text for _, text in rows],
             })
-            added += 1
+        added = len(rows)
         current = [f["id"] for f in files]
         removed = 0
         gone = [fid for fid in known if fid not in set(current)]
@@ -192,5 +207,5 @@ def sync() -> dict | None:
     except Exception as exc:  # noqa: BLE001 - tick 本体を止めない
         logger.warning("ドライブの取込に失敗: %s", exc)
         return {"error": "drive_sync_failed"}
-    return {"files": len(files), "updated": added, "pending": max(0, len(changed) - SYNC_BATCH),
+    return {"files": len(files), "updated": added, "pending": len(changed) - added,
             "removed": removed}

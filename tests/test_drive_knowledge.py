@@ -79,9 +79,10 @@ def test_sync_updates_changed_and_removes_gone(drive_tree, monkeypatch):
 
     assert result == {"files": 2, "updated": 1, "pending": 0, "removed": 1}
     upserts = [p for s, p in executed if "MERGE" in s]
-    assert [p["file_id"] for p in upserts] == ["d_budget"]
-    assert upserts[0]["access"] == "officers"
-    assert upserts[0]["text"] == "本文:予算案"
+    assert len(upserts) == 1  # まとめて1回で書く
+    assert upserts[0]["file_ids"] == ["d_budget"]
+    assert upserts[0]["accesses"] == ["officers"]
+    assert upserts[0]["texts"] == ["本文:予算案"]
     deletes = [p for s, p in executed if s.startswith("DELETE")]
     assert deletes == [{"ids": ["d_old"]}]
 
@@ -93,8 +94,8 @@ def test_sync_records_unreadable_files(drive_tree, monkeypatch):
     monkeypatch.setattr(lake_query, "execute",
                         lambda sql, params=None: executed.append(params) or 1)
     drive_knowledge.sync()
-    assert all(p["text"] == "" for p in executed)
-    assert len(executed) == 2  # 名簿と事務局は取り込まない
+    assert len(executed) == 1
+    assert executed[0]["texts"] == ["", ""]  # 名簿と事務局は取り込まない
 
 
 def test_sync_batches(drive_tree, monkeypatch):
@@ -107,6 +108,17 @@ def test_sync_batches(drive_tree, monkeypatch):
     result = drive_knowledge.sync()
     assert result["updated"] == drive_knowledge.SYNC_BATCH
     assert result["pending"] == 6  # 予算案＋あふれた5件
+
+
+def test_sync_stops_at_time_budget(drive_tree, monkeypatch):
+    clock = iter([0, 10, drive_knowledge.SYNC_SECONDS + 1])
+    monkeypatch.setattr(drive_knowledge.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(drive_knowledge, "_known", lambda: {})
+    monkeypatch.setattr(drive_knowledge, "_extract", lambda f, token: "x")
+    monkeypatch.setattr(lake_query, "execute", lambda sql, params=None: 1)
+    result = drive_knowledge.sync()
+    assert result["updated"] == 1  # 時間切れで残りは次回
+    assert result["pending"] == 1
 
 
 def test_sync_failure_does_not_raise(drive_tree, monkeypatch):
