@@ -14,7 +14,7 @@ from datetime import datetime
 
 from linebot.v3.messaging import Message, TextMessage
 
-from . import ai_feedback, lake, lake_knowledge
+from . import ai_feedback, drive_knowledge, lake, lake_knowledge
 from .inference import record_inference
 from .llm import answer_question, model_for
 from .models import (
@@ -74,7 +74,8 @@ def answer_member_question(
     started = time.monotonic()
     context = build_context(repo, member, now=now)
     # LINE で共有された資料・やり取りから、質問者が見られる範囲で関連するものを足す（P6-4a）
-    chunks = lake_knowledge.search(member.line_user_id, question)
+    chunks = lake_knowledge.search(member.line_user_id, question,
+                                   drive_knowledge.scopes_for(member))
     searched = time.monotonic()
     lake_section = lake_knowledge.context_section(repo, chunks)
     if lake_section:

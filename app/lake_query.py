@@ -28,6 +28,11 @@ def dataset() -> str:
 def _param(name: str, value) -> dict:
     # 型を明示しないと BigQuery は STRING として扱い、数値との比較で
     # 「No matching signature for operator <=」になる（本番で発生）
+    if isinstance(value, (list, tuple)):
+        # 文字列の配列（IN UNNEST(@x) で使う）
+        return {"name": name,
+                "parameterType": {"type": "ARRAY", "arrayType": {"type": "STRING"}},
+                "parameterValue": {"arrayValues": [{"value": str(v)} for v in value]}}
     if isinstance(value, bool):
         kind, text = "BOOL", str(value).lower()
     elif isinstance(value, int):

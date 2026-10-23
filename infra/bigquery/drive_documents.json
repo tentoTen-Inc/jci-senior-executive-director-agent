@@ -1,0 +1,10 @@
+[
+  {"name": "file_id", "type": "STRING", "mode": "REQUIRED", "description": "Google ドライブのファイルID"},
+  {"name": "title", "type": "STRING", "mode": "NULLABLE", "description": "ファイル名"},
+  {"name": "path", "type": "STRING", "mode": "NULLABLE", "description": "置き場所（2027/04-委員会/… のようなフォルダの並び）"},
+  {"name": "mime_type", "type": "STRING", "mode": "NULLABLE", "description": "ファイルの種類"},
+  {"name": "modified_at", "type": "TIMESTAMP", "mode": "NULLABLE", "description": "ドライブでの最終更新"},
+  {"name": "access", "type": "STRING", "mode": "NULLABLE", "description": "答えに使える相手: members（会員）/ officers（五役・監事）"},
+  {"name": "text", "type": "STRING", "mode": "NULLABLE", "description": "本文（上限あり）"},
+  {"name": "synced_at", "type": "TIMESTAMP", "mode": "NULLABLE", "description": "取り込んだ時刻"}
+]

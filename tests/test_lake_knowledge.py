@@ -93,7 +93,9 @@ def test_search_passes_parameters(enabled, monkeypatch):
                         lambda sql, params=None: seen.update(params) or [CHUNK])
     assert lake_knowledge.search("U_sed", "福島ブロックの予定を教えて") == [CHUNK]
     assert seen == {"user_id": "U_sed", "question": "福島ブロックの予定を教えて",
-                    "max_distance": lake_knowledge.MAX_DISTANCE}
+                    "max_distance": lake_knowledge.MAX_DISTANCE, "drive_scopes": ["_none_"]}
+    lake_knowledge.search("U_sed", "サマリーの書き方", ["members", "officers"])
+    assert seen["drive_scopes"] == ["members", "officers"]
 
 
 def test_search_without_line_user_is_empty(enabled, monkeypatch):
@@ -141,7 +143,8 @@ def _capture_llm(monkeypatch) -> list[str]:
 
 
 def test_assistant_adds_line_sources(enabled, monkeypatch):
-    monkeypatch.setattr(lake_knowledge, "search", lambda uid, q: [CHUNK] if uid == "U_sed" else [])
+    monkeypatch.setattr(lake_knowledge, "search",
+                        lambda uid, q, scopes=None: [CHUNK] if uid == "U_sed" else [])
     prompts = _capture_llm(monkeypatch)
     repo = InMemoryRepository()
     msgs = answer_member_question(repo, _member(), "福島ブロックの予定を教えて", now=NOW)
@@ -150,7 +153,7 @@ def test_assistant_adds_line_sources(enabled, monkeypatch):
 
 
 def test_assistant_still_answers_without_sources(enabled, monkeypatch):
-    monkeypatch.setattr(lake_knowledge, "search", lambda uid, q: [])
+    monkeypatch.setattr(lake_knowledge, "search", lambda uid, q, scopes=None: [])
     prompts = _capture_llm(monkeypatch)
     answer_member_question(InMemoryRepository(), _member(), "次の例会は？", now=NOW)
     assert "LINEで共有された資料" not in prompts[0]
@@ -223,4 +226,6 @@ def test_tick_runs_knowledge_index(monkeypatch):
         res = TestClient(main.app, headers=ADMIN_AUTH).post("/tasks/tick")
     finally:
         set_repo(None)
-    assert res.json()["lake"] == {"redact": None, "knowledge": {"indexed": 2, "removed": 0}}
+    # ドライブの取込は DRIVE_KNOWLEDGE_FOLDERS 未設定なので None
+    assert res.json()["lake"] == {"redact": None, "drive": None,
+                                  "knowledge": {"indexed": 2, "removed": 0}}

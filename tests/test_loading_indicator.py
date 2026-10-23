@@ -79,7 +79,7 @@ def test_answer_records_timing(monkeypatch):
     monkeypatch.setenv("LINE_EVENTS_TOPIC", "line-events")
     envs = []
     monkeypatch.setattr(lake, "publish", lambda e: envs.extend(e) or True)
-    monkeypatch.setattr(lake_knowledge, "search", lambda uid, q: [])
+    monkeypatch.setattr(lake_knowledge, "search", lambda uid, q, scopes=None: [])
     monkeypatch.setattr(llm, "generate_answer", lambda *a, **k: Generation(text=json.dumps(
         {"answer": "回答です", "grounded": True, "needs_human": False})))
     member = Member(member_id="m2", name="遠藤 孝行", line_user_id="U_sed")
