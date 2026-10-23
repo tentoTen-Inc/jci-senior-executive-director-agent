@@ -124,7 +124,7 @@ def test_no_citation_no_footer(links):
 
 def test_assistant_appends_footer_but_remembers_plain_answer(links, monkeypatch):
     monkeypatch.setenv("LAKE_EMBEDDING_MODEL", "embedding_model")
-    monkeypatch.setattr(lake_knowledge, "search", lambda uid, q: [MSG, PDF0])
+    monkeypatch.setattr(lake_knowledge, "search", lambda uid, q, scopes=None: [MSG, PDF0])
     monkeypatch.setattr(llm, "generate_answer", lambda *a, **k: Generation(text=json.dumps({
         "answer": "資料によると10月8日に引継ぎがあります。[2]", "grounded": True,
         "needs_human": False})))

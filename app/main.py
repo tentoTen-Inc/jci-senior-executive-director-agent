@@ -42,7 +42,17 @@ from linebot.v3.webhooks import (
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import ai_feedback, config, file_links, gmail, lake, line_link, line_push, line_worker
+from . import (
+    ai_feedback,
+    config,
+    drive_knowledge,
+    file_links,
+    gmail,
+    lake,
+    line_link,
+    line_push,
+    line_worker,
+)
 from . import lake_api as lake_api_module
 from .admin_api import router as admin_router
 from .calendar_import import pull_changes
@@ -431,7 +441,9 @@ def tasks_tick():
         posts_result = {"error": "posts_failed"}
     gmail_result = _tick_gmail_import(repo, now)
     gcal_result = _tick_gcal(repo, now)
-    lake_result = {"redact": redact_unsent(), "knowledge": index_knowledge()}
+    # ドライブの資料を取り込んでから索引する（同じ tick で新しい資料も検索できるように）
+    lake_result = {"redact": redact_unsent(), "drive": drive_knowledge.sync(),
+                   "knowledge": index_knowledge()}
     jobs = plan_reminders(repo, now)
     results = []
     for job in jobs:

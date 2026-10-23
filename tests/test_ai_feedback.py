@@ -54,7 +54,7 @@ SOURCE = {"chunk_id": "file:m2:0", "title": "年内スケジュール.pdf", "sco
 # 回答の記録と 👍/👎
 # --------------------------------------------------------------------------- #
 def test_answer_is_recorded_with_sources_and_buttons(repo, published, monkeypatch):
-    monkeypatch.setattr(lake_knowledge, "search", lambda uid, q: [SOURCE])
+    monkeypatch.setattr(lake_knowledge, "search", lambda uid, q, scopes=None: [SOURCE])
     _llm(monkeypatch)
     [msg] = answer_member_question(repo, repo.get_member("sed"), "福島ブロックの予定を教えて",
                                    now=NOW)
@@ -77,14 +77,14 @@ def test_answer_is_recorded_with_sources_and_buttons(repo, published, monkeypatc
 
 def test_no_buttons_when_lake_disabled(repo, monkeypatch):
     monkeypatch.delenv("LINE_EVENTS_TOPIC", raising=False)
-    monkeypatch.setattr(lake_knowledge, "search", lambda uid, q: [])
+    monkeypatch.setattr(lake_knowledge, "search", lambda uid, q, scopes=None: [])
     _llm(monkeypatch)
     [msg] = answer_member_question(repo, repo.get_member("sed"), "質問です", now=NOW)
     assert msg.quick_reply is None  # 押されても記録できないので付けない
 
 
 def test_escalated_answer_is_recorded_as_such(repo, published, monkeypatch):
-    monkeypatch.setattr(lake_knowledge, "search", lambda uid, q: [])
+    monkeypatch.setattr(lake_knowledge, "search", lambda uid, q, scopes=None: [])
     _llm(monkeypatch, grounded=False, needs_human=True)
     answer_member_question(repo, repo.get_member("sed"), "会費の減免を相談したい", now=NOW)
     record = next(e["payload"] for e in published if e["kind"] == "ai_answer")

@@ -17,7 +17,7 @@ import re
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
-from . import config, file_links, lake_query
+from . import config, drive_knowledge, file_links, lake_query
 from .repository import Repository
 
 logger = logging.getLogger("jci-agent.lake_knowledge")
@@ -53,6 +53,31 @@ def _embed_options(task: str) -> str:
 # --------------------------------------------------------------------------- #
 # 索引
 # --------------------------------------------------------------------------- #
+def _drive_chunks_cte() -> str:
+    """Google ドライブの資料の断片（docs/drive-knowledge-design.md）。無効なら何も足さない。"""
+    if not drive_knowledge.is_enabled():
+        return ""
+    return f"""drive_chunks AS (
+  SELECT
+    'drive' AS source_kind,
+    d.file_id AS source_id,
+    n AS chunk_no,
+    'drive' AS scope_type,
+    d.access AS scope_id,
+    CAST(NULL AS STRING) AS user_id,
+    d.modified_at AS sent_at,
+    d.title,
+    CONCAT(
+      'ドライブの資料「', COALESCE(d.title, ''), '」(', COALESCE(d.path, ''), '／更新 ',
+      FORMAT_TIMESTAMP('%Y-%m-%d', d.modified_at, 'Asia/Tokyo'), ')\\n',
+      SUBSTR(d.text, n * {CHUNK_STEP} + 1, {CHUNK_CHARS})
+    ) AS content
+  FROM {_table('drive_documents')} AS d,
+    UNNEST(GENERATE_ARRAY(0, DIV(CHAR_LENGTH(d.text) - 1, {CHUNK_STEP}))) AS n
+  WHERE CHAR_LENGTH(COALESCE(d.text, '')) > 0
+),"""
+
+
 def candidate_chunks_sql() -> str:
     """まだ索引していない断片（ベクトル化の入力。列 content が本文）。"""
     return f"""
@@ -93,9 +118,15 @@ message_chunks AS (
   FROM {_table('v_messages_for_ai')} AS m
   WHERE m.message_type = 'text' AND CHAR_LENGTH(m.text) >= {MIN_MESSAGE_CHARS}
 ),
+{_drive_chunks_cte()}
 candidates AS (
-  SELECT CONCAT(source_kind, ':', source_id, ':', CAST(chunk_no AS STRING)) AS chunk_id, *
-  FROM (SELECT * FROM file_chunks UNION ALL SELECT * FROM message_chunks)
+  SELECT
+    -- ドライブの資料は更新のたびに断片を作り直すので、版（更新時刻）を ID に含める
+    CONCAT(source_kind, ':', source_id, ':',
+           IF(source_kind = 'drive', CONCAT(CAST(UNIX_SECONDS(sent_at) AS STRING), ':'), ''),
+           CAST(chunk_no AS STRING)) AS chunk_id, *
+  FROM (SELECT * FROM file_chunks UNION ALL SELECT * FROM message_chunks
+        {"UNION ALL SELECT * FROM drive_chunks" if drive_knowledge.is_enabled() else ""})
 )
 SELECT c.*
 FROM candidates AS c
@@ -128,7 +159,18 @@ def cleanup_sql() -> str:
 DELETE FROM {_table('knowledge_chunks')}
 WHERE source_id IN (SELECT message_id FROM {_table('v_messages')} WHERE unsent)
    OR source_id IN (SELECT message_id FROM {_table('v_files')} WHERE status = 'deleted_unsent')
+{_drive_cleanup()}
 """.strip()
+
+
+def _drive_cleanup() -> str:
+    """消えた・更新されたドライブの資料の古い断片を消す（新しい版の断片は別 ID で入る）。"""
+    if not drive_knowledge.is_enabled():
+        return ""
+    return f"""   OR (source_kind = 'drive' AND NOT EXISTS (
+         SELECT 1 FROM {_table('drive_documents')} AS d
+         WHERE d.file_id = source_id AND d.modified_at = sent_at
+           AND d.access = scope_id AND CHAR_LENGTH(COALESCE(d.text, '')) > 0))"""
 
 
 def index_knowledge() -> dict | None:
@@ -177,6 +219,7 @@ ranked AS (
   CROSS JOIN query_embedding AS q
   WHERE (k.scope_type = 'user' AND k.scope_id = @user_id)
      OR (k.scope_type IN ('group', 'room') AND k.scope_id IN (SELECT scope_id FROM my_scopes))
+     OR (k.scope_type = 'drive' AND k.scope_id IN UNNEST(@drive_scopes))
 )
 SELECT * FROM ranked
 WHERE distance <= @max_distance
@@ -185,13 +228,19 @@ LIMIT {TOP_K}
 """.strip()
 
 
-def search(user_id: str | None, question: str) -> list[dict]:
-    """質問者が見られる範囲から、質問に近い断片を返す。無効・失敗なら空。"""
+def search(user_id: str | None, question: str,
+           drive_scopes: list[str] | None = None) -> list[dict]:
+    """質問者が見られる範囲から、質問に近い断片を返す。無効・失敗なら空。
+
+    drive_scopes: 答えに使ってよいドライブ資料の範囲（drive_knowledge.scopes_for）。
+    """
     if not is_enabled() or not user_id or not (question or "").strip():
         return []
     try:
         return lake_query.query(search_sql(), {
             "user_id": user_id, "question": question[:2000], "max_distance": MAX_DISTANCE,
+            # 空配列だと型が決まらないので、どれにも当たらない値を入れる
+            "drive_scopes": drive_scopes or ["_none_"],
         })
     except Exception as exc:  # noqa: BLE001 - 検索できなくても従来の材料で答える
         logger.warning("ナレッジ検索に失敗: %s", exc)
@@ -201,6 +250,8 @@ def search(user_id: str | None, question: str) -> list[dict]:
 def _where(repo: Repository, chunk: dict) -> str:
     if chunk.get("scope_type") == "user":
         return "あなたとの個別トーク"
+    if chunk.get("scope_type") == "drive":
+        return "Google ドライブ"
     group = repo.get_line_group(chunk.get("scope_id") or "")
     if group and group.group_name:
         return f"グループ「{group.group_name}」"
@@ -220,7 +271,7 @@ def context_section(repo: Repository, chunks: list[dict]) -> str:
     """回答材料に足す「LINEで共有された資料・やり取り」（出典番号付き）。"""
     if not chunks:
         return ""
-    lines = ["## LINEで共有された資料・やり取り（関連度の高い順。使ったら出典番号を書く）"]
+    lines = ["## LINE・Google ドライブの資料・やり取り（関連度の高い順。使ったら出典番号を書く）"]
     for i, chunk in enumerate(chunks, start=1):
         kind = f"資料「{chunk['title']}」" if chunk.get("title") else "発言"
         body = (chunk.get("content") or "").split("\n", 1)[-1].strip()
@@ -259,8 +310,8 @@ def citation_footer(repo: Repository, chunks: list[dict], answer: str,
     groups: dict[tuple, dict] = {}
     for n in cited:
         chunk = chunks[n - 1]
-        if chunk.get("source_kind") == "file":
-            key = ("file", chunk.get("source_id"))
+        if chunk.get("source_kind") in ("file", "drive"):
+            key = (chunk.get("source_kind"), chunk.get("source_id"))
         else:
             key = ("message", chunk.get("scope_type"), chunk.get("scope_id"),
                    _short_date(chunk.get("sent_at")))
@@ -272,7 +323,11 @@ def citation_footer(repo: Repository, chunks: list[dict], answer: str,
         label = "".join(f"[{n}]" for n in group["nums"])
         where = _where_short(repo, chunk)
         when = _short_date(chunk.get("sent_at"))
-        if chunk.get("source_kind") == "file":
+        if chunk.get("source_kind") == "drive":
+            # ドライブの資料はドライブで開く（共有されている人だけが開ける）
+            lines.append(f"{label} {chunk.get('title') or '資料'}（Google ドライブ・{when}更新）")
+            lines.append(f"https://drive.google.com/open?id={chunk['source_id']}")
+        elif chunk.get("source_kind") == "file":
             lines.append(f"{label} {chunk.get('title') or 'ファイル'}（{when}・{where}）")
             url = file_links.file_url(chunk["source_id"], user_id) if user_id else None
             if url:
