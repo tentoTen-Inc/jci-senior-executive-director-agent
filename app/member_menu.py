@@ -30,6 +30,7 @@ from .models import (
     EventStatus,
     Member,
 )
+from .proposal_intent import try_proposal_create_intent
 from .repository import Repository
 
 # メニュー項目（label, postback action 値）
@@ -137,6 +138,10 @@ def handle_member_text(
     if t.startswith("menu|"):
         t = t.split("|", 1)[1]
     else:
+        # 理事の「3月例会の事業計画書を作って」。資料の編集（「作って」も含む）より先に判定する
+        create = try_proposal_create_intent(repo, member, t, now=now, in_group=in_group)
+        if create is not None:
+            return create
         # 理事の「サマリーを更新して」等。予定操作（「作って」「変更」等を含む）より先に判定する
         doc_edit = try_doc_edit_intent(repo, member, t, now=now, in_group=in_group)
         if doc_edit is not None:

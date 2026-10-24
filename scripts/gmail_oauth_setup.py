@@ -28,7 +28,9 @@ Google は OOB（`urn:ietf:wg:oauth:2.0:oob`＝コードを画面表示する方
 ブラウザが開く → 専用Gmail（inawashiro.jc@gmail.com）で許可 → 自動で戻ってくる。
 最後に Secret Manager への登録コマンドを出力する。
 
-スコープは gmail.readonly のみ（送信・削除はしない）。
+スコープは既定で gmail.readonly のみ（送信・削除はしない）。
+議案（事業計画書）の作成（docs/proposal-ledger-design.md §6）を使うときは `--with-drive` を付けて
+drive スコープも許可する（LOM 公式アカウントとしてフォルダ・文書を作るため）。
 """
 from __future__ import annotations
 
@@ -46,6 +48,7 @@ import webbrowser
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
 DEFAULT_PORT = 8765
 #: 未確認アプリの警告画面を通る時間も見て余裕をとる
 DEFAULT_TIMEOUT = 900
@@ -58,12 +61,12 @@ def redirect_uri(port: int) -> str:
     return f"http://localhost:{port}/"
 
 
-def auth_url(client_id: str, port: int) -> str:
+def auth_url(client_id: str, port: int, *, with_drive: bool = False) -> str:
     params = {
         "client_id": client_id,
         "redirect_uri": redirect_uri(port),
         "response_type": "code",
-        "scope": SCOPE,
+        "scope": f"{SCOPE} {DRIVE_SCOPE}" if with_drive else SCOPE,
         "access_type": "offline",
         "prompt": "consent",  # 毎回 refresh token を返させる
     }
@@ -216,6 +219,8 @@ def main() -> None:
         help="取得した refresh token を表示せず Secret Manager に直接登録する",
     )
     parser.add_argument("--project", default="jci-sed-agent")
+    parser.add_argument("--with-drive", action="store_true",
+                        help="drive スコープも許可する（議案の作成で使う）")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument(
         "--timeout", type=int, default=DEFAULT_TIMEOUT,
@@ -242,7 +247,7 @@ def main() -> None:
             "--client-secret-file か、--client-id と --client-secret を指定してください。"
         )
 
-    url = auth_url(client_id, args.port)
+    url = auth_url(client_id, args.port, with_drive=args.with_drive)
     print("\n次のURLをブラウザで開き、専用Gmailアカウントで許可してください:\n", flush=True)
     print(url, flush=True)
     print(f"\n（戻り先: {redirect_uri(args.port)}）", flush=True)
