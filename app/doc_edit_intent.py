@@ -27,7 +27,7 @@ from . import committee_docs, drive_knowledge, lake_knowledge
 from .audit import write_audit
 from .inference import record_inference
 from .llm import draft_doc_edit, model_for
-from .models import InferenceUsage, Member, PendingDocEdit
+from .models import InferenceUsage, Member, PendingDocEdit, Proposal
 from .repository import Repository
 
 logger = logging.getLogger("jci-agent.doc_edit_intent")
@@ -36,7 +36,11 @@ ACTION_DOC = "doc"
 OP_TTL = timedelta(minutes=30)
 #: 資料を指す語と、書き換えを頼む語の両方があるときだけ依頼とみなす（通常の質問を巻き込まない）
 DOC_WORDS = ("サマリー", "計画書", "事業計画", "年間計画", "資料", "ドキュメント",
-             "スローガン", "現状分析", "目指すべき状態", "事業概要", "事業手法")
+             "スローガン", "現状分析", "目指すべき状態", "事業概要", "事業手法",
+             # 事業計画書の欄の名前（「背景と目的を書いて」）
+             "事業名", "背景", "目的", "パートナー", "実施場所", "事業内容", "具体的手法", "次第",
+             "実施組織", "期待される効果", "検証方法", "参加員数", "広報戦略", "引き継ぎ",
+             "審議のポイント", "ブラッシュアップ", "選定理由", "リスクマネジメント")
 EDIT_WORDS = ("更新", "書いて", "書き換", "直して", "修正", "記入", "反映", "変えて", "変更",
               "作って", "作成", "埋めて", "入れて", "追記", "足して", "加えて", "まとめて")
 #: サマリー（年間計画）を指す語
@@ -63,6 +67,12 @@ CONFLICT_TEXT = (
 
 def looks_like_doc_edit(text: str) -> bool:
     return any(w in text for w in DOC_WORDS) and any(w in text for w in EDIT_WORDS)
+
+
+def _named_proposals(repo: Repository, text: str) -> list[Proposal]:
+    """文に名前が出てくる、作業文書のある議案（「4月例会の背景を書いて」の 4月例会）。"""
+    return [p for p in repo.list_proposals(status="open")
+            if p.doc_id and p.committee and p.title and p.title in text]
 
 
 # --------------------------------------------------------------------------- #
@@ -165,7 +175,8 @@ def try_doc_edit_intent(
     repo: Repository, member: Member, text: str, *, now: datetime, in_group: bool = False,
 ) -> list[Message] | None:
     """資料の更新の依頼なら、確認メッセージ（または聞き返し）を返す。対象外なら None。"""
-    if not looks_like_doc_edit(text):
+    named = _named_proposals(repo, text)
+    if not looks_like_doc_edit(text) and not (named and any(w in text for w in EDIT_WORDS)):
         return None
     if not committee_docs.is_board_member(member):
         return [TextMessage(text=NOT_BOARD_TEXT)]
@@ -180,12 +191,18 @@ def try_doc_edit_intent(
         candidates = committee_docs.editable_committees(member, list(folders))
         if not candidates:
             return [TextMessage(text=NO_COMMITTEE_TEXT)]
-        committee = choose_committee(member, text, candidates)
-        if isinstance(committee, list):
-            return _which_committee(committee)
-        doc = choose_doc(text, committee_docs.find_docs(folders[committee], token))
-        if isinstance(doc, list):
-            return _which_doc(committee, doc)
+        # 議案の名前が出てくれば、その議案書（担当できる委員会のもの）を対象にする
+        plans = [p for p in named if p.committee in candidates]
+        if len({p.committee for p in plans}) == 1 and len(plans) == 1:
+            committee = plans[0].committee
+            doc = {"id": plans[0].doc_id, "name": f"{plans[0].title}の事業計画書"}
+        else:
+            committee = choose_committee(member, text, candidates)
+            if isinstance(committee, list):
+                return _which_committee(committee)
+            doc = choose_doc(text, committee_docs.find_docs(folders[committee], token))
+            if isinstance(doc, list):
+                return _which_doc(committee, doc)
         content = committee_docs.read_doc(doc["id"], token)
     except Exception:  # noqa: BLE001 - ドライブの不調で会話全体を止めない
         logger.exception("委員会資料の読み込みに失敗しました")

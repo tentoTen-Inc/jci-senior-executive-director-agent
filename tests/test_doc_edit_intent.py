@@ -224,3 +224,47 @@ def test_member_text_routes_doc_edit_before_calendar(drive, monkeypatch):
     messages = handle_member_text(InMemoryRepository(), SED, "総務委員会のサマリーを作って",
                                   now=NOW)
     assert "よろしいですか" in messages[0].text
+
+
+# --------------------------------------------------------------------------- #
+# 議案書（事業計画書）の欄の名前・議案名での依頼
+# --------------------------------------------------------------------------- #
+PLAN = json.loads((Path(__file__).parent / "fixtures" / "business_plan_doc.json").read_text())
+APRIL = ("4月例会は各会員がお互いの仕事や人柄を深く知れる機会を提供したいです。"
+         "背景と目的を書いて。")
+
+
+def test_field_words_count_as_doc_edit():
+    assert looks_like_doc_edit("背景と目的を書いて")
+    assert looks_like_doc_edit("広報戦略を埋めて")
+
+
+def test_plan_named_by_proposal_title(drive, monkeypatch):
+    from app.models import Proposal
+    repo = InMemoryRepository()
+    repo.upsert_proposal(Proposal(proposal_id="p4", title="4月例会", committee="組織未来推進委員会",
+                                  doc_id="doc_plan4", status="open"))
+    reads = []
+    monkeypatch.setattr(committee_docs, "read_doc",
+                        lambda doc_id, token: reads.append(doc_id) or PLAN)
+    monkeypatch.setattr(committee_docs, "find_docs",
+                        lambda folder, token: pytest.fail("議案名で決まるので探さない"))
+    monkeypatch.setattr(llm, "generate_doc_edit", lambda prompt, **kw: Generation(text=json.dumps({
+        "edits": [{"field": "1.事業実施に至る背景・問題", "text": "会員同士が互いの仕事を知らない"},
+                  {"field": "2.目的・対内対象者", "text": "互いの仕事と人柄を深く知る"}],
+        "summary": "背景と目的を書きました。", "question": None}, ensure_ascii=False)))
+
+    messages = try_doc_edit_intent(repo, SED, APRIL, now=NOW)
+    assert reads == ["doc_plan4"]
+    assert "「4月例会の事業計画書」（組織未来推進委員会）" in messages[0].text
+    assert "【1.事業実施に至る背景・問題】" in messages[0].text
+
+
+def test_plan_of_other_committee_is_not_chosen(drive, monkeypatch):
+    from app.models import Proposal
+    repo = InMemoryRepository()
+    repo.upsert_proposal(Proposal(proposal_id="p4", title="4月例会", committee="地域未来創造委員会",
+                                  doc_id="doc_plan4", status="open"))
+    # 総務委員会の委員長は地域未来創造委員会の議案書を対象にしない（自分の委員会の資料から選ぶ）
+    messages = try_doc_edit_intent(repo, CHAIR, APRIL, now=NOW)
+    assert "4月例会の事業計画書" not in messages[0].text
