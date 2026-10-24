@@ -53,7 +53,7 @@ LAYOUTS: dict[str, list[list[str]]] = {
 #: ボタンに出す文字（ラベルと違うもの）
 TEXTS = {"__admin__": "管理画面を開く"}
 #: LIFF の画面があるボタン（`?view=`）。LIFF ID を渡したときだけ LIFF を直接開く
-LIFF_VIEWS: dict[str, str] = {}
+LIFF_VIEWS: dict[str, str] = {MENU_EVENTS: "events", MENU_POLLS: "polls"}
 #: 背景（作業を始めるボタンは緑、運営は落ち着いた紫）
 _ACCENT = {MENU_DOCS: "#1e7a4f", MENU_PROPOSALS: "#1e7a4f"}
 _TONES = {MEMBER: ["#1f3a5f", "#2e5a88"], BOARD: ["#1f3a5f", "#2e5a88"],

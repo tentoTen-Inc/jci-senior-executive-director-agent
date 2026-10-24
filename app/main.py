@@ -68,6 +68,7 @@ from .invite import verify_and_link
 from .lake_api import router as lake_router
 from .lake_knowledge import index_knowledge
 from .lake_maintenance import redact_unsent
+from .liff_api import router as liff_menu_router
 from .line_messages import apply_postback, build_attendance_request
 from .link_api import public_router as liff_link_router
 from .link_api import router as link_router
@@ -127,6 +128,7 @@ app.include_router(surveys_router, prefix="/api")
 app.include_router(lake_router, prefix="/api")  # LINEグループ（データレイク）
 app.include_router(polls_router, prefix="/api")  # 日程調整（管理）
 app.include_router(liff_router)  # 日程調整の LIFF 画面（公開・LINE ログインで本人確認）
+app.include_router(liff_menu_router)  # メニューの LIFF 画面（予定と出欠など。公開・IDトークン）
 app.include_router(link_router, prefix="/api")  # LINE 連携の申請・予約投稿（管理）
 app.include_router(liff_link_router)  # LINE 連携の申請（LIFF・公開）
 
