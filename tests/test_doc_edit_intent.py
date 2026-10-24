@@ -224,7 +224,8 @@ def test_member_text_routes_doc_edit_before_calendar(drive, monkeypatch):
                         lambda *a, **k: pytest.fail("予定操作の解釈に回さない"))
     messages = handle_member_text(InMemoryRepository(), SED, "総務委員会のサマリーを作って",
                                   now=NOW)
-    assert "よろしいですか" in messages[0].text
+    # 自由文では資料を書き換えない。［資料を作る・直す］のボタンを返すだけ
+    assert messages[0].quick_reply.items[0].action.data == "menu|資料を作る・直す"
 
 
 # --------------------------------------------------------------------------- #

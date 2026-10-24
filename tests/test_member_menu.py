@@ -58,9 +58,17 @@ def test_answer_prompt_returns_attendance_request():
     assert labels == ["出席", "Web出席", "欠席"]
 
 
-def test_contact_records_escalation():
+def test_contact_text_only_guides():
+    """短い文の「事務局に連絡」では起票せず、ボタンを返すだけ（設計 §2）。"""
     repo, member = setup()
     msgs = handle_member_text(repo, member, "事務局に連絡", now=NOW)
+    assert msgs[0].quick_reply.items[0].action.data == "menu|事務局に連絡"
+    assert repo.list_escalations() == []
+
+
+def test_contact_button_records_escalation():
+    repo, member = setup()
+    msgs = handle_member_text(repo, member, "menu|事務局に連絡", now=NOW)
     assert "受け付け" in msgs[0].text
     escalations = repo.list_escalations()
     assert len(escalations) == 1
@@ -83,7 +91,7 @@ def test_menu_keyword():
     repo, member = setup()
     msgs = handle_member_text(repo, member, "メニュー", now=NOW)
     labels = [i.action.label for i in msgs[0].quick_reply.items]
-    assert "次回の予定" in labels and "事務局に連絡" in labels
+    assert labels == ["予定と出欠", "日程調整", "AIに聞く", "事務局に連絡"]
 
 
 # --------------------------------------------------------------------------- #

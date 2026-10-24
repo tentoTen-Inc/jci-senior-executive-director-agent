@@ -89,7 +89,7 @@ def test_escalated_answer_is_recorded_as_such(repo, published, monkeypatch):
     answer_member_question(repo, repo.get_member("sed"), "会費の減免を相談したい", now=NOW)
     record = next(e["payload"] for e in published if e["kind"] == "ai_answer")
     assert record["grounded"] is False and record["needs_human"] is True
-    assert "事務局に取次ぎました" in record["answer"]  # 実際に送った文面を残す
+    assert "［事務局に取り次ぐ］" in record["answer"]  # 実際に送った文面を残す
 
 
 @pytest.mark.parametrize("rating, thanks", [("up", "ありがとうございます"),

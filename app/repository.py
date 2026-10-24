@@ -12,6 +12,7 @@ from .models import (
     Attendance,
     AuditLog,
     CalendarSyncState,
+    ChatState,
     Conversation,
     DeliveryJob,
     DeliveryLog,
@@ -74,6 +75,8 @@ class Repository(Protocol):
     def get_gcal_sync_state(self) -> CalendarSyncState: ...
     def save_gcal_sync_state(self, state: CalendarSyncState) -> None: ...
     def save_calendar_op(self, op: PendingCalendarOp) -> None: ...
+    def get_chat_state(self, member_id: str) -> ChatState | None: ...
+    def save_chat_state(self, state: ChatState) -> None: ...
     def get_calendar_op(self, op_id: str) -> PendingCalendarOp | None: ...
     def save_doc_edit(self, op: PendingDocEdit) -> None: ...
     def get_doc_edit(self, op_id: str) -> PendingDocEdit | None: ...
@@ -159,6 +162,7 @@ class InMemoryRepository:
         self._settings: Settings = Settings()
         self._gcal_sync: CalendarSyncState = CalendarSyncState()
         self._calendar_ops: dict[str, PendingCalendarOp] = {}
+        self._chat_states: dict[str, ChatState] = {}
         self._doc_edits: dict[str, PendingDocEdit] = {}
         self._proposal_creates: dict[str, PendingProposalCreate] = {}
         self._line_groups: dict[str, LineGroup] = {}
@@ -268,6 +272,13 @@ class InMemoryRepository:
 
     def save_calendar_op(self, op: PendingCalendarOp) -> None:
         self._calendar_ops[op.op_id] = op.model_copy(deep=True)
+
+    def get_chat_state(self, member_id: str) -> ChatState | None:
+        state = self._chat_states.get(member_id)
+        return state.model_copy(deep=True) if state else None
+
+    def save_chat_state(self, state: ChatState) -> None:
+        self._chat_states[state.member_id] = state.model_copy(deep=True)
 
     def get_calendar_op(self, op_id: str) -> PendingCalendarOp | None:
         op = self._calendar_ops.get(op_id)

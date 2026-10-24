@@ -178,7 +178,6 @@ def routed(monkeypatch):
     from app import member_menu
     monkeypatch.setattr(member_menu, "answer_member_question", fake_answer)
     monkeypatch.setattr(member_menu, "try_calendar_intent", lambda *a, **k: None)
-    monkeypatch.setattr(member_menu, "try_attendance_intent", lambda *a, **k: None)
     return calls
 
 
@@ -199,7 +198,7 @@ def test_long_questions_go_to_ai(routed, text):
     ("次回の予定", "予定されている"),
     ("出欠確認", "対象の予定はありません"),
     ("欠席", "回答が必要な出欠はありません"),
-    ("事務局に連絡", "事務局への連絡を受け付けました"),
+    ("事務局に連絡", "［事務局に連絡］を押すと受け付けます"),  # 文では起票しない（設計 §2）
 ])
 def test_short_commands_keep_fixed_replies(routed, text, expected):
     msgs = handle_member_text(InMemoryRepository(), _member(), text, now=NOW)
