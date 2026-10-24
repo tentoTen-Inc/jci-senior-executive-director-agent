@@ -160,9 +160,12 @@ def test_business_plan_subheadings_become_fields():
         assert name in fields
     # 見出しの行そのもの（「■問題」）は項目にしない
     assert "1.事業実施に至る背景" not in fields
-    # 小見出しと内容が同じセルにある項目は1つのまま
-    assert fields["6.事業内容(目的達成のための手法)"].text.startswith("■事業概要")
-    assert fields["4.実施日と実施前後のスケジュール"].text.startswith("■実施日")
+    # セルの中の見出し（■事業概要・■具体的手法）は見出しごとの項目になり、見出しそのものは含まない
+    assert "6.事業内容(目的達成のための手法)・事業概要" in fields
+    assert "6.事業内容(目的達成のための手法)・具体的手法" in fields
+    assert fields["4.実施日と実施前後のスケジュール・実施日"].text.startswith("2026年◯月◯日")
+    # 記入例の「■◯◯◯」は見出しにせず、見出しの前の内容として残す
+    assert fields["5.実施場所"].text.startswith("■◯◯◯")
 
 
 def test_business_plan_feedback_tables_are_named_by_meeting():
@@ -182,3 +185,43 @@ def test_subheading_field_writes_into_the_content_row():
                                              {"1.事業実施に至る背景・問題": "会員が減っている"})
     assert requests[-2]["insertText"] == {"location": {"index": problem.start},
                                           "text": "会員が減っている"}
+
+
+def test_business_plan_inner_tables_become_row_fields():
+    fields = {f.name: f for f in committee_docs.extract_fields(PLAN)}
+    plan = "6.事業内容(目的達成のための手法)・次第"
+    assert fields[f"{plan}・1行目・時間"].text == "："
+    assert f"{plan}・6行目・担当者" in fields
+    assert "7.実施組織・実施組織・4行目・職務分掌" in fields
+    assert "11.広報戦略・01.広報戦略・3行目・どの媒体で" in fields
+    assert fields["4.実施日と実施前後のスケジュール・実施前後のスケジュール・1行目・いつ"].text \
+        == "99月99日"
+    # 表を含むセル全体を1つの項目として書き換えない（表を壊さない）
+    assert "6.事業内容(目的達成のための手法)" not in fields
+
+
+def test_inner_heading_segment_keeps_heading_and_table():
+    fields = committee_docs.extract_fields(PLAN)
+    by = {f.name: f for f in fields}
+    summary = by["6.事業内容(目的達成のための手法)・事業概要"]
+    requests = committee_docs.build_requests(fields, {
+        "6.事業内容(目的達成のための手法)・事業概要": "会員同士が仕事を紹介し合う",
+        "6.事業内容(目的達成のための手法)・次第・1行目・内容": "開会",
+    })
+    deletes = [r["deleteContentRange"]["range"] for r in requests if "deleteContentRange" in r]
+    # 見出し「■事業概要」（575-581）と次第の表（598-662）は消さない
+    assert all(not (d["startIndex"] < 581 and d["endIndex"] > 575) for d in deletes)
+    assert all(not (d["startIndex"] < 662 and d["endIndex"] > 598) for d in deletes)
+    inserted = [r["insertText"] for r in requests if "insertText" in r]
+    assert inserted[-1] == {"location": {"index": summary.start},
+                            "text": "会員同士が仕事を紹介し合う"}
+
+
+def test_heading_without_paragraph_gets_new_line():
+    fields = {f.name: f for f in committee_docs.extract_fields(PLAN)}
+    reason = fields["5.実施場所・選定理由"]
+    assert reason.prefix_newline
+    [insert, style] = committee_docs.build_requests(list(fields.values()),
+                                                    {"5.実施場所・選定理由": "駅から近い"})
+    assert insert["insertText"]["text"] == "\n駅から近い"
+    assert style["updateTextStyle"]["range"]["startIndex"] == reason.start + 1

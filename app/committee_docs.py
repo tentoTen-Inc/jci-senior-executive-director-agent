@@ -182,6 +182,8 @@ class DocField:
     start: int
     end: int
     style: dict = field(default_factory=dict)
+    #: 見出しの直後に段落が無いとき、見出しの末尾に改行を足して新しい段落に書く
+    prefix_newline: bool = False
 
 
 def _body(doc: dict) -> list[dict]:
@@ -227,6 +229,100 @@ def _field(name: str, cell: dict, editable: bool, label: dict) -> DocField:
                     start=start, end=max(start, end), style=style)
 
 
+#: セルの中の見出し（「■事業概要」「［選定理由］」「■［次第］」）。記入例の「■◯◯◯」は見出しにしない
+_INNER_HEADING = re.compile(r"^(?:■\s*(?P<a>[^◯]+)|[［\[](?P<b>[^］\]◯]+)[］\]])$")
+
+
+def _inner_heading(text: str) -> str | None:
+    if not text or len(text) > 20:
+        return None
+    match = _INNER_HEADING.match(text)
+    if match is None:
+        return None
+    return (match["a"] or match["b"]).strip().strip("［］[]").strip() or None
+
+
+def _with_label_style(style: dict, label: dict) -> dict:
+    for key in _BORROWED_STYLE:
+        if key not in style and key in (borrowed := _cell_style(label)):
+            style[key] = borrowed[key]
+    return style
+
+
+def _segment(name: str, paras: list[dict], editable: bool, label: dict,
+             heading: dict | None) -> DocField:
+    """セルの中の見出しの下の段落（見出しそのものは含めない）。"""
+    if paras:
+        text = "\n".join(_paragraph_text(p).replace("\xa0", " ").strip() for p in paras)
+        style = _with_label_style(_cell_style({"content": paras}), label)
+        return DocField(name=name, text=text.strip(), editable=editable,
+                        start=paras[0]["startIndex"], end=paras[-1]["endIndex"] - 1,
+                        style=style)
+    # 見出しの直後が次の見出し → 見出しの段落の末尾に改行を足して書く（見出しの太字は引き継がない）
+    style = _with_label_style({}, label)
+    if _cell_style({"content": [heading]}).get("bold"):
+        style["bold"] = False
+    at = heading["endIndex"] - 1
+    return DocField(name=name, text="", editable=editable, start=at, end=at, style=style,
+                    prefix_newline=True)
+
+
+def _inner_table(base: str, table: dict, editable: bool, label: dict) -> list[DocField]:
+    """セルの中の表（見出し行＋記入する行）を「〇行目・列の見出し」の項目にする。"""
+    rows = [r.get("tableCells", []) for r in table.get("tableRows", [])]
+    if len(rows) < 2:
+        return []
+    headers = [_label(c) for c in rows[0]]
+    fields = []
+    for no, cells in enumerate(rows[1:], start=1):
+        for header, cell in zip(headers, cells, strict=False):
+            if header:
+                fields.append(_field(f"{base}・{no}行目・{header}", cell, editable, label))
+    return fields
+
+
+def _cell_fields(name: str, cell: dict, editable: bool, label: dict) -> list[DocField]:
+    """内容セルを項目にする。セルの中に見出しや表があれば、見出しごと・表の行ごとに分ける
+    （事業計画書の「6.事業内容」の ■事業概要・■具体的手法・■［次第］の表など）。"""
+    content = cell.get("content", [])
+    has_table = any("table" in el for el in content)
+    has_heading = any("paragraph" in el and _inner_heading(_paragraph_text(el)) for el in content)
+    if not has_table and not has_heading:
+        return [_field(name, cell, editable, label)]
+
+    fields: list[DocField] = []
+    heading: str | None = None
+    heading_para: dict | None = None
+    paras: list[dict] = []
+    after_table = False
+
+    def flush() -> None:
+        if after_table:
+            return  # 表の後ろの余白の段落は項目にしない
+        if heading is None:
+            if any(_paragraph_text(p) for p in paras):
+                fields.append(_segment(name, paras, editable, label, None))
+        else:
+            fields.append(_segment(f"{name}・{heading}", paras, editable, label, heading_para))
+
+    for el in content:
+        if "table" in el:
+            if paras:
+                flush()
+            base = f"{name}・{heading}" if heading else name
+            fields += _inner_table(base, el["table"], editable, label)
+            paras, after_table = [], True
+        elif "paragraph" in el:
+            title = _inner_heading(_paragraph_text(el))
+            if title:
+                flush()
+                heading, heading_para, paras, after_table = title, el, [], False
+            else:
+                paras.append(el)
+    flush()
+    return fields
+
+
 #: 4列の項目表（「◯ファイル名｜値｜◯委員会名｜値」）の項目名の印
 _KEY_MARKS = ("◯", "○")
 #: 審議の記録の表の前にある見出し（「【五役会議①】開催日：…」）
@@ -267,10 +363,10 @@ def _two_column(rows: list[list[dict]]) -> list[DocField]:
         follows = i + 1 < len(rows) and not _label(rows[i + 1][0])
         if follows and _is_subheading(text):
             sub = text.lstrip("■").strip()
-            fields.append(_field(f"{label}・{sub}", rows[i + 1][1], editable, label_cell))
+            fields += _cell_fields(f"{label}・{sub}", rows[i + 1][1], editable, label_cell)
             i += 2
             continue
-        fields.append(_field(label, cells[1], editable, label_cell))
+        fields += _cell_fields(label, cells[1], editable, label_cell)
         i += 1
     return fields
 
@@ -364,10 +460,13 @@ def build_requests(fields: list[DocField], edits: dict[str, str]) -> list[dict]:
         if f.end > f.start:
             requests.append({"deleteContentRange": {
                 "range": {"startIndex": f.start, "endIndex": f.end}}})
-        requests.append({"insertText": {"location": {"index": f.start}, "text": text}})
+        # 見出しの直後に段落が無い項目は、改行を足して見出しの次の段落に書く
+        lead = "\n" if f.prefix_newline else ""
+        requests.append({"insertText": {"location": {"index": f.start}, "text": lead + text}})
         if f.style:
+            begin = f.start + len(lead)
             requests.append({"updateTextStyle": {
-                "range": {"startIndex": f.start, "endIndex": f.start + _utf16_len(text)},
+                "range": {"startIndex": begin, "endIndex": begin + _utf16_len(text)},
                 "textStyle": f.style,
                 "fields": ",".join(sorted(f.style)),
             }})
