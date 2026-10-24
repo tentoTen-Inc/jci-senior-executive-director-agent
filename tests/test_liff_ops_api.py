@@ -203,7 +203,8 @@ def test_poll_form_shows_destination_groups(repo):
     form = client.get("/liff/api/ops/poll-form", headers=_auth("tok-vp")).json()
     groups = {t["value"]: t["group_name"] for t in form["targets"]}
     assert groups == {"goyaku": "2027年度　五役", "riji": "2027 猪苗代青年会議所 理事会",
-                      "all": None}
+                      "committee": None, "all": None}
+    assert [c["name"] for c in form["committees"]] == ["総務委員会"]
 
 
 def test_create_poll_does_not_announce_until_confirmed(repo, pushed):

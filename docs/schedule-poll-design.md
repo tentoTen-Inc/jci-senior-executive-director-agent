@@ -67,7 +67,7 @@ LIFF 画面 /liff/poll（jci-sed-agent・公開）
 | `location` | str \| None | 「JC会館 or オンライン」 |
 | `candidates` | list[PollCandidate] | `candidate_id`・`start`・`end`（候補日時） |
 | `target_scope` | TargetScope | 回答してほしい人（五役・理事など）。集計と未回答者の判定に使う |
-| `group_id` | str | 案内・催促・決定を送る LINE グループ |
+| `group_id` | str \| None | 案内・催促・決定を送る LINE グループ。None なら連携済みの対象者に個別に送る（委員会あてでグループが無いとき・§9） |
 | `deadline` | datetime \| None | 回答締切 |
 | `status` | `open` \| `closed` \| `decided` | 決定・締切後は回答を受け付けない |
 | `decided_candidate_id` / `event_id` | | 決定した候補と作ったイベント |
@@ -105,7 +105,8 @@ LIFF 画面 /liff/poll（jci-sed-agent・公開）
 |---|---|---|
 | POST | `/polls` | 作成（status=open。まだ送信しない） |
 | GET | `/polls` / `/polls/{id}` | 一覧 / 詳細（回答の表・候補日ごとの ○△× 数・未回答者） |
-| POST | `/polls/{id}/announce` | グループへ案内（Flex） |
+| GET | `/polls/committees` | 委員会ごとの対象者数と送り先（グループ or 個別。§9） |
+| POST | `/polls/{id}/announce` | グループへ案内（Flex）。グループが無ければ対象者に個別に |
 | POST | `/polls/{id}/remind` | 未回答者の名前を挙げてグループへ催促（テキスト） |
 | POST | `/polls/{id}/decide` | `{candidate_id}` で決定 → Event 作成（下書き・カレンダー登録）→ グループへ決定の連絡 |
 | POST | `/polls/{id}/close` | 締め切る（決定はしない） |
@@ -146,3 +147,18 @@ LINE Developers で、Messaging API と同じプロバイダーに LINE ログ�
 - エンドポイントURL `https://line.647jc.org/liff/poll`、サイズ Tall、Scope `openid` `profile`
 - チャネルを「公開」にする（開発中は管理者しか使えない）
 - チャネルID と LIFF ID を環境変数に設定する
+
+## 9. 委員会あての日程調整（2026-10-25 追加）
+専務の依頼:「日程調整が五役・理事会・全員しかないが、各委員会ごとに委員会を開催する。その時にも使えるように委員会を追加して。」
+
+- 送り先（管理画面と LIFF「日程調整を作る」の両方）に「委員会」を追加し、委員会を選ぶ（組織図＝会員の所属・副理事長の担当から）。
+  `target_scope = {kind: committee, value: [委員会名]}`。
+- 回答できる人（対象者）: その委員会に所属する会員（兼務を含む）＋担当の副理事長（`supervised_committees`）。
+  ※ 日程が決まって作る予定（Event）は従来どおり委員会あてで、出欠の対象に担当副理事長は入らない（`Member.supervised_committees` の決めごと）。
+- 案内先: 専務AIが入っている（抜けていない）LINE グループのうち、名前にその委員会名を含むもの。
+  無ければ `group_id = None` とし、LINE 連携済みの対象者に個別トークで送る（未連携の人には届かない）。
+- 送る前の確認画面に、グループか個別か・送り先名・人数（対象 / 連携済み）を出す（「送り先名を見せてから送る」と同じ扱い）。
+- 個別のとき: 案内（Flex）と決定の連絡は対象者それぞれに、催促は未回答の人だけに本人あての文（他の人の名前は並べない）。
+  閲覧権は対象会員のみ（グループのメンバー確認はしない）。
+- 集計・締切・決定の流れは既存と同じ。
+- テスト: `tests/test_poll_committee.py`

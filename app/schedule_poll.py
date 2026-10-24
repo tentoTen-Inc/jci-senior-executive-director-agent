@@ -1,8 +1,9 @@
 """日程調整（docs/schedule-poll-design.md）。
 
-候補日を LINE グループに案内し、各自が LIFF 画面で ○△× を回答する。
-回答者の本人確認は LIFF の IDトークン（LINE ログイン）、閲覧権は案内先グループのメンバーか
-連携済みの対象会員。集計・催促・決定（イベント作成→カレンダー登録）もここで行う。
+候補日を LINE グループ（委員会あてでグループが無ければ対象者の個別トーク）に案内し、
+各自が LIFF 画面で ○△× を回答する。回答者の本人確認は LIFF の IDトークン（LINE ログイン）、
+閲覧権は案内先グループのメンバーか連携済みの対象会員。集計・催促・決定（イベント作成→
+カレンダー登録）もここで行う。
 
 `_verify_id_token_raw` / `_is_group_member_raw` がテストのモック境界。
 """
@@ -11,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -27,6 +29,7 @@ from .jpdate import month_day_time, weekday
 from .models import (
     Event,
     EventStatus,
+    LineGroup,
     Member,
     MemberStatus,
     PollAnswer,
@@ -135,8 +138,10 @@ def target_members(repo: Repository, poll: SchedulePoll) -> list[Member]:
     members = [m for m in repo.list_members() if m.status == MemberStatus.active]
     scope = poll.target_scope
     if scope.kind == TargetScopeKind.committee:
+        # 委員会に所属する会員（兼務を含む）＋担当の副理事長
         wanted = set(scope.value)
-        members = [m for m in members if m.committee_names & wanted]
+        members = [m for m in members
+                   if (m.committee_names | set(m.supervised_committees)) & wanted]
     elif scope.kind == TargetScopeKind.officer:
         members = [m for m in members if m.officer_role in scope.value]
     elif scope.kind == TargetScopeKind.custom:
@@ -146,12 +151,50 @@ def target_members(repo: Repository, poll: SchedulePoll) -> list[Member]:
     return members
 
 
+def committee_names(repo: Repository) -> list[str]:
+    """組織図（会員の所属・副理事長の担当）にある委員会の名前。"""
+    names: set[str] = set()
+    for m in repo.list_members():
+        if m.status == MemberStatus.active:
+            names |= m.committee_names | set(m.supervised_committees)
+    return sorted(n for n in names if n)
+
+
+def _norm(name: str) -> str:
+    return re.sub(r"[\s　]", "", name)
+
+
+def active_groups(repo: Repository) -> list[LineGroup]:
+    """専務AIが入っている（抜けていない）名前の分かるグループ。"""
+    return [g for g in repo.list_line_groups() if g.group_name
+            and (not g.left_at or (g.joined_at and g.joined_at > g.left_at))]
+
+
+def committee_group(repo: Repository, committee: str) -> LineGroup | None:
+    """名前にその委員会名が含まれるグループ（無ければ None＝対象者に個別に送る）。"""
+    wanted = _norm(committee)
+    return next((g for g in active_groups(repo) if wanted and wanted in _norm(g.group_name)),
+                None)
+
+
+def destination(repo: Repository, poll: SchedulePoll) -> dict:
+    """送り先（確認画面に出す）: グループか、連携済みの対象者に個別か。"""
+    targets = target_members(repo, poll)
+    linked = [m for m in targets if m.line_user_id]
+    if poll.group_id:
+        group = next((g for g in repo.list_line_groups() if g.group_id == poll.group_id), None)
+        return {"mode": "group", "group_name": group.group_name if group else None,
+                "targets": len(targets), "linked": len(linked)}
+    return {"mode": "individual", "group_name": None, "targets": len(targets),
+            "linked": len(linked)}
+
+
 def authorize_viewer(repo: Repository, poll: SchedulePoll, user_id: str) -> Member | None:
     """閲覧してよいか確かめ、連携済みの会員なら返す。だめなら PollError(403)。"""
     linked = repo.get_member_by_line_user_id(user_id)
     if linked is not None and linked.member_id in {m.member_id for m in target_members(repo, poll)}:
         return linked
-    if is_group_member(poll.group_id, user_id):
+    if poll.group_id and is_group_member(poll.group_id, user_id):
         return linked
     raise PollError(403, "この日程調整を見る権限がありません（案内されたグループのメンバーのみ）。")
 
@@ -285,6 +328,7 @@ def summary(repo: Repository, poll: SchedulePoll) -> dict:
         "counts": counts,
         "pending": [m.name for m in targets if m.member_id not in by_member],
         "liff_url": liff_url(poll.poll_id) if is_configured() else None,
+        "destination": destination(repo, poll),
     }
 
 
@@ -334,9 +378,43 @@ def decided_text(poll: SchedulePoll) -> str:
     return f"【日程決定】{poll.title}\n{when}{place}に決まりました。ご回答ありがとうございました。"
 
 
+def remind_personal_text(poll: SchedulePoll) -> str:
+    lines = [f"【日程調整のお願い】{poll.title}", "まだ回答をいただいていません。"]
+    if poll.deadline:
+        lines.append(f"締切: {month_day_time(poll.deadline)}")
+    lines.append(f"回答はこちら: {liff_url(poll.poll_id)}")
+    return "\n".join(lines)
+
+
 def _send(group_id: str, messages: list[Message]) -> None:
     if not line_push.push_messages(group_id, messages):
         raise PollError(503, "LINE のアクセストークンが未設定のため送れません。")
+
+
+def _send_individually(members: list[Member], messages: list[Message]) -> int:
+    """連携済みの会員それぞれの個別トークに送る（送れた人数を返す）。"""
+    linked = [m for m in members if m.line_user_id]
+    if not linked:
+        raise PollError(409, "LINE 連携済みの対象者がいないため送れません。")
+    sent = 0
+    for m in linked:
+        try:
+            if line_push.push_messages(m.line_user_id, messages):
+                sent += 1
+        except Exception:  # noqa: BLE001 - 友だち未追加など。他の人には送る
+            logger.warning("日程調整を個別に送れませんでした: %s", m.member_id)
+    if sent == 0:
+        raise PollError(503, "LINE で送れませんでした（トークン未設定・友だち未追加など）。")
+    return sent
+
+
+def _deliver(repo: Repository, poll: SchedulePoll, messages: list[Message],
+             members: list[Member] | None = None) -> None:
+    """グループがあればグループへ、無ければ対象者（members）に個別に送る。"""
+    if poll.group_id:
+        _send(poll.group_id, messages)
+    else:
+        _send_individually(target_members(repo, poll) if members is None else members, messages)
 
 
 def announce(repo: Repository, poll: SchedulePoll, actor: str, now: datetime) -> SchedulePoll:
@@ -344,7 +422,7 @@ def announce(repo: Repository, poll: SchedulePoll, actor: str, now: datetime) ->
         raise PollError(400, "LIFF が未設定です（LIFF_ID・LINE_LOGIN_CHANNEL_ID）。")
     if poll.status != PollStatus.open:
         raise PollError(409, "受付中の日程調整だけ案内できます。")
-    _send(poll.group_id, [announce_message(poll)])
+    _deliver(repo, poll, [announce_message(poll)])
     poll = poll.model_copy(update={"announced_at": now})
     repo.save_poll(poll)
     write_audit(repo, actor=actor, action="poll.announce", target=poll.poll_id, detail=poll.title)
@@ -359,7 +437,13 @@ def remind(repo: Repository, poll: SchedulePoll, actor: str, now: datetime) -> l
     pending = summary(repo, poll)["pending"]
     if not pending:
         raise PollError(409, "未回答の方はいません。")
-    _send(poll.group_id, [TextMessage(text=remind_text(poll, pending))])
+    if poll.group_id:
+        _send(poll.group_id, [TextMessage(text=remind_text(poll, pending))])
+    else:
+        # 個別に送るときは、他の人の名前を並べず本人へのお願いにする
+        answered = {r.member_id for r in repo.list_poll_responses(poll.poll_id) if r.member_id}
+        waiting = [m for m in target_members(repo, poll) if m.member_id not in answered]
+        _send_individually(waiting, [TextMessage(text=remind_personal_text(poll))])
     repo.save_poll(poll.model_copy(update={"reminded_at": now}))
     write_audit(repo, actor=actor, action="poll.remind", target=poll.poll_id,
                 detail="・".join(pending))
@@ -389,7 +473,7 @@ def decide(repo: Repository, poll: SchedulePoll, candidate_id: str, actor: str, 
     write_audit(repo, actor=actor, action="poll.decide", target=poll.poll_id,
                 detail=f"{poll.title} {candidate_label(candidate.start, candidate.end)}")
     if notify:
-        _send(poll.group_id, [TextMessage(text=decided_text(poll))])
+        _deliver(repo, poll, [TextMessage(text=decided_text(poll))])
     return poll, event
 
 
