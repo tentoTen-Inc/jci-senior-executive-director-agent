@@ -447,19 +447,23 @@ def _utf16_len(text: str) -> int:
     return len(text.encode("utf-16-le")) // 2
 
 
-def build_requests(fields: list[DocField], edits: dict[str, str]) -> list[dict]:
+def build_requests(fields: list[DocField], edits: dict[str, str], *,
+                   allow_empty: bool = False) -> list[dict]:
     """内容セルの中身を新しい文に置き換える batchUpdate のリクエスト。
 
     後ろの位置から順に書き換える（前の書き換えで後ろの位置がずれないように）。
-    読み取り専用の項目・名前が一致しない項目・空の文は無視する。
+    読み取り専用の項目・名前が一致しない項目は無視する。空の文は無視する
+    （allow_empty=True なら中身を消す。書き込みを元に戻すとき、もとが空欄だった項目）。
     """
     targets = [(f, edits[f.name].strip()) for f in fields
-               if f.editable and edits.get(f.name, "").strip()]
+               if f.editable and f.name in edits and (allow_empty or edits[f.name].strip())]
     requests: list[dict] = []
     for f, text in sorted(targets, key=lambda t: t[0].start, reverse=True):
         if f.end > f.start:
             requests.append({"deleteContentRange": {
                 "range": {"startIndex": f.start, "endIndex": f.end}}})
+        if not text:
+            continue
         # 見出しの直後に段落が無い項目は、改行を足して見出しの次の段落に書く
         lead = "\n" if f.prefix_newline else ""
         requests.append({"insertText": {"location": {"index": f.start}, "text": lead + text}})

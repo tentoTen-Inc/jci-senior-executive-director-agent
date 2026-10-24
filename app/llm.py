@@ -122,10 +122,16 @@ _CALENDAR_PROMPT = """あなたは青年会議所(JC)の予定管理アシスタ
 """
 
 _DOC_EDIT_PROMPT = """あなたは青年会議所(JC)の専務理事を補佐するアシスタントです。
-理事メンバーの依頼にもとづいて、委員会の資料(Google ドキュメント)の表の項目に書く文章の案を作り、
-JSONで出力してください。
+理事メンバーと1つの資料(Google ドキュメント)について作業しています。
+メッセージを読み、次のどれかで答え、JSONで出力してください。
+- edit: 資料の表の項目に書く案を作る(書き込むのは本人が確認してから)
+- ask: 依頼が曖昧で案を作れないので聞き返す
+- answer: 資料を変えずに答える(質問・相談・去年の内容の確認など)
 
 厳守事項:
+- 書き換えの依頼でなければ edit にしない。迷ったら ask。
+- 「これまでのやり取り」と「確認待ちの案」を踏まえる(「さっきの次第を20:45終了に」等)。
+  確認待ちの案を直す依頼なら、直した後の案の全体(変更する項目すべて)を edits に入れる。
 - 書き換える項目名は「項目の一覧」から一字一句そのまま選ぶ。
   一覧に無い項目・[読み取り専用] の項目は返さない。
 - 依頼が一部の項目(例: 「スローガンを変えて」)だけなら、その項目だけを返す。
@@ -139,12 +145,11 @@ JSONで出力してください。
   指定が無い月は返さない(予定を推測で埋めない)。書くときは6文字以内(例: 例会、総会、〇〇事業)。
 - 参考資料(昨年度の資料・理事長所信など)の方針や言葉づかいは参考にしてよいが、
   根拠のない数値・日付・固有名詞・実績を作らない。
-- 依頼の内容が読み取れず案を作れないときは edits を空にし、question に聞き返す一文(敬体)を入れる。
 
 出力JSON:
-- edits: [{{field: 項目名, text: 新しい内容(改行可)}}]
-- summary: 何をどう変えたかの一文(敬体)
-- question: 聞き返す文(不要なら null)
+- kind: edit | ask | answer
+- edits: [{{field: 項目名, text: 新しい内容(改行可)}}] (edit のときだけ。ほかは [])
+- message: edit なら何をどう変えるかの一文、ask なら聞き返す文、answer なら回答(いずれも敬体)
 
 # 委員会
 {committee}
@@ -158,7 +163,13 @@ JSONで出力してください。
 # 参考資料(検索結果の抜粋)
 {knowledge}
 
-# 依頼
+# これまでのやり取り(古い順)
+{history}
+
+# 確認待ちの案
+{pending}
+
+# メッセージ
 {request}
 
 # 出力(JSONのみ)
@@ -700,9 +711,9 @@ def digest_notice(subject: str, sender: str, body: str) -> DigestOutcome | None:
 # 委員会資料の案（docs/committee-docs-edit-design.md §6）
 # --------------------------------------------------------------------------- #
 class DocEditDraft(BaseModel):
+    kind: str = "ask"  # edit | ask | answer
     edits: dict[str, str] = Field(default_factory=dict)  # 項目名 → 新しい内容
-    summary: str | None = None
-    question: str | None = None
+    message: str | None = None
 
 
 class DocEditOutcome(BaseModel):
@@ -711,20 +722,20 @@ class DocEditOutcome(BaseModel):
 
 
 def generate_doc_edit(prompt: str, *, model: str, project: str, location: str) -> Generation:
-    """委員会資料の案の生成（テストでモックする境界）。"""
+    """資料の作業セッションの返答の生成（テストでモックする境界）。"""
     return _call_gemini(
         prompt, model=model, project=project, location=location,
         thinking_budget=thinking_budget_for("doc_edit"),
     )
 
 
-def draft_doc_edit(request: str, committee: str, title: str, fields: str,
-                   knowledge: str) -> DocEditOutcome | None:
-    """依頼から、資料の表の項目に書く案を作る。失敗時は None。"""
+def draft_doc_edit(request: str, committee: str, title: str, fields: str, knowledge: str,
+                   *, history: str = "", pending: str = "") -> DocEditOutcome | None:
+    """作業セッションのメッセージに、書き換えの案・聞き返し・回答で答える。失敗時は None。"""
     model, project, location = _target("doc_edit")
     prompt = _DOC_EDIT_PROMPT.format(
         request=request, committee=committee, title=title, fields=fields,
-        knowledge=knowledge or "(なし)",
+        knowledge=knowledge or "(なし)", history=history or "(なし)", pending=pending or "(なし)",
     )
     try:
         gen = generate_doc_edit(prompt, model=model, project=project, location=location)
@@ -734,10 +745,13 @@ def draft_doc_edit(request: str, committee: str, title: str, fields: str,
             name, text = _opt_str(item.get("field")), _opt_str(item.get("text"))
             if name and text:
                 edits[name] = text
-        draft = DocEditDraft(edits=edits, summary=_opt_str(data.get("summary")),
-                             question=_opt_str(data.get("question")))
+        kind = _opt_str(data.get("kind")) or ("edit" if edits else "ask")
+        if kind not in ("edit", "ask", "answer"):
+            kind = "ask"
+        draft = DocEditDraft(kind=kind, edits=edits if kind == "edit" else {},
+                             message=_opt_str(data.get("message")))
     except Exception:  # noqa: BLE001 - LLM未設定/失敗でも本処理は止めない
-        logger.exception("委員会資料の案の作成に失敗しました")
+        logger.exception("資料の作業セッションの返答の作成に失敗しました")
         return None
     return DocEditOutcome(draft=draft, usage=InferenceUsage(
         model=model, input_tokens=gen.input_tokens, output_tokens=gen.output_tokens,

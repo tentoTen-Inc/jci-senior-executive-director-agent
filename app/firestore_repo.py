@@ -15,6 +15,9 @@ from .models import (
     Conversation,
     DeliveryJob,
     DeliveryLog,
+    DocEdit,
+    DocSession,
+    DocTurn,
     Escalation,
     Event,
     EventStatus,
@@ -28,7 +31,6 @@ from .models import (
     MemberStatus,
     NoticeAction,
     PendingCalendarOp,
-    PendingDocEdit,
     PendingProposalCreate,
     PollResponse,
     Proposal,
@@ -49,7 +51,7 @@ COL_POLICIES = "reminderPolicies"
 COL_SETTINGS = "settings"
 COL_CALENDAR_OPS = "calendarOps"
 COL_CHAT_STATES = "chatStates"
-COL_DOC_EDITS = "pendingDocEdits"
+COL_DOC_SESSIONS = "docSessions"
 COL_PROPOSAL_CREATES = "pendingProposalCreates"
 COL_LINE_GROUPS = "lineGroups"
 COL_JOBS = "deliveryJobs"
@@ -198,12 +200,36 @@ class FirestoreRepository:
         snap = self._db.collection(COL_CALENDAR_OPS).document(op_id).get()
         return PendingCalendarOp.model_validate(snap.to_dict()) if snap.exists else None
 
-    def save_doc_edit(self, op: PendingDocEdit) -> None:
-        self._db.collection(COL_DOC_EDITS).document(op.op_id).set(op.model_dump(mode="json"))
+    def save_doc_session(self, session: DocSession) -> None:
+        self._db.collection(COL_DOC_SESSIONS).document(session.session_id).set(
+            session.model_dump(mode="json"))
 
-    def get_doc_edit(self, op_id: str) -> PendingDocEdit | None:
-        snap = self._db.collection(COL_DOC_EDITS).document(op_id).get()
-        return PendingDocEdit.model_validate(snap.to_dict()) if snap.exists else None
+    def get_doc_session(self, session_id: str) -> DocSession | None:
+        snap = self._db.collection(COL_DOC_SESSIONS).document(session_id).get()
+        return DocSession.model_validate(snap.to_dict()) if snap.exists else None
+
+    def add_doc_turn(self, session_id: str, turn: DocTurn) -> None:
+        self._db.collection(COL_DOC_SESSIONS).document(session_id).collection("turns").add(
+            turn.model_dump(mode="json"))
+
+    def list_doc_turns(self, session_id: str, *, limit: int = 20) -> list[DocTurn]:
+        col = self._db.collection(COL_DOC_SESSIONS).document(session_id).collection("turns")
+        turns = [DocTurn.model_validate(s.to_dict()) for s in col.stream()]
+        return sorted(turns, key=lambda t: t.at)[-limit:]
+
+    def save_doc_edit(self, edit: DocEdit) -> None:
+        (self._db.collection(COL_DOC_SESSIONS).document(edit.session_id)
+         .collection("edits").document(edit.op_id).set(edit.model_dump(mode="json")))
+
+    def get_doc_edit(self, session_id: str, op_id: str) -> DocEdit | None:
+        snap = (self._db.collection(COL_DOC_SESSIONS).document(session_id)
+                .collection("edits").document(op_id).get())
+        return DocEdit.model_validate(snap.to_dict()) if snap.exists else None
+
+    def list_doc_edits(self, session_id: str) -> list[DocEdit]:
+        col = self._db.collection(COL_DOC_SESSIONS).document(session_id).collection("edits")
+        edits = [DocEdit.model_validate(s.to_dict()) for s in col.stream()]
+        return sorted(edits, key=lambda e: e.created_at)
 
     def save_proposal_create(self, op: PendingProposalCreate) -> None:
         self._db.collection(COL_PROPOSAL_CREATES).document(op.op_id).set(

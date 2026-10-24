@@ -284,23 +284,50 @@ class PendingCalendarOp(BaseModel):
     status: str = "pending"  # pending | done | declined | expired
 
 
-class PendingDocEdit(BaseModel):
-    """LINE で確認待ちの委員会資料の更新（docs/committee-docs-edit-design.md §8）。
+class DocSession(BaseModel):
+    """資料の作業セッション（docs/doc-session-design.md §4）。1セッション＝1つの資料。"""
 
-    本人が「更新する」を押したときだけ書き込む。30分で失効する。
-    """
-
-    op_id: str
+    session_id: str
     member_id: str
-    committee: str
     doc_id: str
     doc_title: str
-    revision_id: str
-    edits: dict[str, str] = Field(default_factory=dict)  # 項目名 → 新しい内容
+    committee: str
+    status: str = "active"  # active | closed
+    started_at: datetime
+    last_active_at: datetime
+    closed_at: datetime | None = None
+    closed_reason: str | None = None  # user | switched | expired
+
+
+class DocTurn(BaseModel):
+    """作業セッションの1発言（本人／AI）。AI は直近の発言を文脈にする。"""
+
+    at: datetime
+    role: str  # user | assistant
+    kind: str  # instruction | edit | ask | answer | applied | declined | reverted | conflict
+    text: str
+    op_id: str | None = None
+
+
+class DocEdit(BaseModel):
+    """作業セッションの書き換えの案と、書き込みの記録（変更前と変更後）。"""
+
+    op_id: str
+    session_id: str
+    member_id: str
+    doc_id: str
+    doc_title: str
+    committee: str
+    kind: str = "edit"  # edit | revert（直前の書き込みを戻す）
+    revert_of: str | None = None
+    revision_id: str  # 案を作ったときに読んだ版
+    after: dict[str, str] = Field(default_factory=dict)  # 項目名 → 新しい内容
+    before: dict[str, str] = Field(default_factory=dict)  # 書き込んだときの元の内容
     summary: str | None = None
+    status: str = "proposed"  # proposed | applied | declined | expired | reverted | conflict
     created_at: datetime
     expires_at: datetime
-    status: str = "pending"  # pending | done | declined | expired
+    applied_at: datetime | None = None
 
 
 class PendingProposalCreate(BaseModel):
