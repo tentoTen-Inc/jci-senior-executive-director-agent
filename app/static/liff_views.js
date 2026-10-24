@@ -196,7 +196,7 @@
         const target = form.targets.find((t) => t.value === d.target);
         kids.push(el("div", { class: "card form" },
           el("label", {}, "1. 会議の名前", input({ type: "text", placeholder: "第3回五役会" }, "title")),
-          el("label", {}, "対象者",
+          el("div", { class: "group" }, "対象者",
             el("div", { class: "choices wide" }, ...form.targets.map((t) => el("button", {
               type: "button", class: "ok", "aria-pressed": String(d.target === t.value),
               onclick: () => { d.target = t.value; d.event_type = t.event_type; draw(); },
@@ -278,7 +278,53 @@
       draw();
     }
 
-    return { events, polls, proposals, attendance, "poll-new": pollNew, approvals };
+    // ---- 意見箱（全員）----
+    async function feedback() {
+      document.title = "意見箱";
+      const form = await api("GET", "/liff/api/feedback");
+      bar.hidden = true;
+      const d = { kind: "", text: "", anonymous: false };
+      const draw = (flash) => {
+        const kids = [...header("意見箱")];
+        const f = flashNode(flash); if (f) kids.push(f);
+        kids.push(el("div", { class: "card form" },
+          el("div", { class: "meta" }, "専務AIの不具合・ほしい機能・使いにくい点など、なんでもお寄せください。急ぎの用件は専務に直接 LINE してください。"),
+          el("div", { class: "group" }, "種類",
+            el("div", { class: "choices grid" }, ...form.kinds.map((k) => el("button", {
+              type: "button", class: "ok", "aria-pressed": String(d.kind === k.value),
+              onclick: () => { d.kind = k.value; draw(); },
+            }, k.label)))),
+          el("label", {}, "内容",
+            el("textarea", { rows: "6", maxlength: String(form.max_length), placeholder: "例: 出欠のボタンを押しても反映されませんでした",
+                             oninput: (e) => { d.text = e.target.value; } }, d.text)),
+          el("label", { class: "check" },
+            el("input", { type: "checkbox", checked: d.anonymous, onchange: (e) => { d.anonymous = e.target.checked; } }),
+            el("span", {}, "匿名で送る（名前を残しません）"))));
+        kids.push(el("div", { class: "actions" }, el("button", {
+          type: "button", class: "primary",
+          onclick: async (e) => {
+            if (!d.kind) return draw({ ok: false, text: "種類を選んでください。" });
+            if (!d.text.trim()) return draw({ ok: false, text: "内容を入力してください。" });
+            const label = form.kinds.find((k) => k.value === d.kind).label;
+            if (!confirm(`「${label}」として${d.anonymous ? "匿名で" : "お名前つきで"}意見箱に送ります。よろしいですか？`)) return;
+            e.target.disabled = true;
+            try {
+              await api("POST", "/liff/api/feedback", d);
+              app.replaceChildren(...header("意見箱"), el("div", { class: "card" },
+                el("h2", {}, "ありがとうございました"),
+                el("div", { class: "meta" }, "いただいたご意見は、専務AIの改善に役立てます。"),
+                el("div", { class: "actions" },
+                  el("button", { type: "button", onclick: () => { d.kind = ""; d.text = ""; d.anonymous = false; draw(); } }, "続けて送る"),
+                  liff.isInClient() ? el("button", { type: "button", class: "primary", onclick: () => liff.closeWindow() }, "閉じる") : null)));
+            } catch (err) { draw({ ok: false, text: err.message }); }
+          },
+        }, "送る")));
+        app.replaceChildren(...kids);
+      };
+      draw();
+    }
+
+    return { events, polls, proposals, attendance, "poll-new": pollNew, approvals, feedback };
   }
 
   window.LiffViews = {

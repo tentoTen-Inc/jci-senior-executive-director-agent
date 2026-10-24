@@ -15,7 +15,7 @@ from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
 
-from . import committee_docs, doc_session, line_link, line_push, roles
+from . import committee_docs, doc_session, feedback_box, line_link, line_push, roles
 from . import schedule_poll as sp
 from .attendance import aggregate, record_attendance
 from .audit import write_audit
@@ -510,4 +510,31 @@ def liff_link_decide(line_user_id: str, action: str, request: Request):
         text = decide_link(repo, member, line_user_id, action, datetime.now())
         return {"message": text, **approvals_view(repo, member)}
     except (LiffError, sp.PollError) as exc:
+        return _error(exc)
+
+
+# --------------------------------------------------------------------------- #
+# 意見箱（全員。docs/feedback-box-design.md §3）
+# --------------------------------------------------------------------------- #
+@router.get("/liff/api/feedback")
+def liff_feedback_form(request: Request):
+    try:
+        viewer(request)
+        return {"kinds": [{"value": k.value, "label": feedback_box.KIND_LABELS[k]}
+                          for k in feedback_box.SELECTABLE],
+                "max_length": feedback_box.TEXT_MAX}
+    except (LiffError, sp.PollError) as exc:
+        return _error(exc)
+
+
+@router.post("/liff/api/feedback")
+def liff_feedback_send(request: Request, body: dict = Body(default_factory=dict)):
+    """［送る］（画面で確認したあと）。匿名なら会員ID を保存しない。"""
+    try:
+        member = viewer(request)
+        feedback_box.submit(get_repo(), member, str(body.get("kind") or ""),
+                            str(body.get("text") or ""), bool(body.get("anonymous")),
+                            datetime.now())
+        return {"ok": True}
+    except (LiffError, sp.PollError, feedback_box.FeedbackError) as exc:
         return _error(exc)

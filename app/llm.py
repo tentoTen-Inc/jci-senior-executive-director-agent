@@ -16,7 +16,17 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from . import config, jpdate
-from .models import InferenceUsage, LlmReview, NoticeDigest, SurveyDigest, SurveyTheme
+from .models import (
+    FeedbackDigest,
+    FeedbackKind,
+    FeedbackTheme,
+    FeedbackTriage,
+    InferenceUsage,
+    LlmReview,
+    NoticeDigest,
+    SurveyDigest,
+    SurveyTheme,
+)
 
 logger = logging.getLogger("jci-agent.llm")
 
@@ -193,13 +203,51 @@ _SURVEY_PROMPT = """あなたは青年会議所(JC)の専務理事を補佐す�
 # 出力(JSONのみ)
 """
 
+_FEEDBACK_TRIAGE_PROMPT = """あなたは青年会議所(JC)猪苗代の LINE ボット「専務AI」の
+開発を手伝うアシスタントです。会員から意見箱に届いた1件を分類し、JSONで出力してください。
+
+出力フィールド:
+- kind: 種類。bug（不具合・動かない・間違っている）/ feature（ほしい機能・要望）/
+  usability（使いにくい・分かりにくい）/ other（その他）/ unanswered（AI が答えられなかった質問）の
+  いずれか。送った人の選んだ種類が内容と合っていなければ直す
+- feature: 対象の機能を短く
+  （例: 出欠, 日程調整, AIの回答, 資料の作業, リッチメニュー, 管理画面, その他）
+- urgency: 緊急度。高（多くの人が使えない・誤った情報が配られる）/ 中 / 低 のいずれか
+- summary: 一行要約（40字以内・内容に無いことを足さない）
+
+# 送った人の選んだ種類
+{kind}
+
+# 内容
+{text}
+
+# 出力(JSONのみ)
+"""
+
+_FEEDBACK_DIGEST_PROMPT = """あなたは青年会議所(JC)猪苗代の LINE ボット「専務AI」の
+開発を手伝うアシスタントです。意見箱に届いた意見を読み、似た意見をまとめて傾向を出し、JSONで出力してください。
+
+出力フィールド:
+- summary: 全体の傾向(3行以内)
+- themes: 論点のまとまり(最大8件・件数の多い順)。各要素は
+  {{label: 論点(20字以内), ids: その論点に当たる意見の id の配列}}
+
+意見に無いことを作らないでください。1件の意見は1つの論点にだけ入れてください。
+
+# 意見（{count}件。各行は「id｜種類｜内容」）
+{items}
+
+# 出力(JSONのみ)
+"""
+
 _QA_PROMPT = """あなたは青年会議所(JC)猪苗代の事務局アシスタントです。
 会員からの質問に、下の「提供情報」だけを根拠にして答えてください。
 
 厳守事項:
 - 提供情報に無いことは推測で答えない。分からない場合は grounded=false にする。
-- 他の会員の個人情報(連絡先・出欠・個別の対応状況)は答えず、事務局へ案内する。
-- 事務局や専務の判断・手続きが必要な依頼は needs_human=true にする。
+- 他の会員の個人情報(連絡先・出欠・個別の対応状況)は答えず、専務理事に直接たずねるよう案内する。
+- 事務局や専務の判断・手続きが必要な依頼は needs_human=true にし、専務理事に直接 LINE で
+  相談するよう案内する(「取り次ぎます」「折り返します」とは書かない)。
 - 「LINEで共有された資料・やり取り」を根拠にしたら、その文の末尾に出典番号（例: [1]）を付ける。
   資料は案や会議資料のことがあるため、確定か分からない内容は「資料によると」と書く。
 - answer は敬体・300字以内。日時や場所は提供情報のとおり正確に書く。
@@ -255,6 +303,11 @@ TASK_MODELS: dict[str, str] = {
     "survey_digest": PRO,  # アンケート自由記述の分析（傾向の読み取り・非同期・件数少）
     # 委員会資料の案（LINE で返事を待つので Flash。文章の質も要るため少しだけ考えさせる・件数少）
     "doc_edit": FLASH,
+    # 意見箱の分類（種類の補正・対象の機能・緊急度・一行要約）。tick で非同期・件数少。
+    # 不具合の取りこぼしや緊急度の見誤りを避けたいので品質重視
+    "feedback_triage": PRO,
+    # 意見箱の傾向のまとめ（似た意見をまとめた論点と件数）。管理画面のボタンから・件数少
+    "feedback_digest": PRO,
 }
 
 
@@ -754,5 +807,87 @@ def draft_doc_edit(request: str, committee: str, title: str, fields: str, knowle
         logger.exception("資料の作業セッションの返答の作成に失敗しました")
         return None
     return DocEditOutcome(draft=draft, usage=InferenceUsage(
+        model=model, input_tokens=gen.input_tokens, output_tokens=gen.output_tokens,
+    ))
+
+
+# --------------------------------------------------------------------------- #
+# 意見箱の分類・傾向のまとめ（docs/feedback-box-design.md §4）
+# --------------------------------------------------------------------------- #
+URGENCIES = ("高", "中", "低")
+
+
+class FeedbackTriageOutcome(BaseModel):
+    triage: FeedbackTriage
+    usage: InferenceUsage
+
+
+class FeedbackDigestOutcome(BaseModel):
+    digest: FeedbackDigest
+    usage: InferenceUsage
+
+
+def generate_feedback_triage(prompt: str, *, model: str, project: str,
+                             location: str) -> Generation:
+    """意見箱の分類の生成（テストでモックする境界）。"""
+    return _call_gemini(prompt, model=model, project=project, location=location,
+                        thinking_budget=thinking_budget_for("feedback_triage"))
+
+
+def triage_feedback(kind: str, text: str) -> FeedbackTriageOutcome | None:
+    """意見1件の種類の補正・対象の機能・緊急度・一行要約。失敗時は None。"""
+    model, project, location = _target("feedback_triage")
+    prompt = _FEEDBACK_TRIAGE_PROMPT.format(kind=kind, text=text)
+    try:
+        gen = generate_feedback_triage(prompt, model=model, project=project, location=location)
+        data = json.loads(gen.text)
+        value = _opt_str(data.get("kind"))
+        urgency = _opt_str(data.get("urgency"))
+        triage = FeedbackTriage(
+            kind=FeedbackKind(value) if value in FeedbackKind.__members__ else None,
+            feature=_opt_str(data.get("feature")),
+            urgency=urgency if urgency in URGENCIES else None,
+            summary=(_opt_str(data.get("summary")) or "")[:60] or None,
+            model=model,
+        )
+    except Exception:  # noqa: BLE001 - LLM未設定/失敗でも本処理は止めない
+        logger.exception("意見箱の分類に失敗しました")
+        return None
+    return FeedbackTriageOutcome(triage=triage, usage=InferenceUsage(
+        model=model, input_tokens=gen.input_tokens, output_tokens=gen.output_tokens,
+    ))
+
+
+def generate_feedback_digest(prompt: str, *, model: str, project: str,
+                             location: str) -> Generation:
+    """意見箱の傾向のまとめの生成（テストでモックする境界）。"""
+    return _call_gemini(prompt, model=model, project=project, location=location,
+                        thinking_budget=thinking_budget_for("feedback_digest"))
+
+
+def digest_feedback(items: list[tuple[str, str, str]]) -> FeedbackDigestOutcome | None:
+    """意見（id, 種類, 内容）の傾向をまとめる。件数は AI に数えさせず id から数える。"""
+    if not items:
+        return None
+    model, project, location = _target("feedback_digest")
+    lines = "\n".join(f"{i}｜{k}｜{' '.join(t.split())}" for i, k, t in items)
+    prompt = _FEEDBACK_DIGEST_PROMPT.format(count=len(items), items=lines)
+    known = {i for i, _, _ in items}
+    try:
+        gen = generate_feedback_digest(prompt, model=model, project=project, location=location)
+        data = json.loads(gen.text)
+        themes = []
+        for t in (data.get("themes") or [])[:8]:
+            label = _opt_str(t.get("label"))
+            ids = list(dict.fromkeys(str(x) for x in (t.get("ids") or []) if str(x) in known))
+            if label and ids:
+                themes.append(FeedbackTheme(label=label, count=len(ids), feedback_ids=ids))
+        digest = FeedbackDigest(summary=_opt_str(data.get("summary")) or "",
+                                themes=sorted(themes, key=lambda t: -t.count),
+                                count=len(items), model=model)
+    except Exception:  # noqa: BLE001 - LLM未設定/失敗でも本処理は止めない
+        logger.exception("意見箱の傾向のまとめに失敗しました")
+        return None
+    return FeedbackDigestOutcome(digest=digest, usage=InferenceUsage(
         model=model, input_tokens=gen.input_tokens, output_tokens=gen.output_tokens,
     ))

@@ -158,19 +158,19 @@ def test_ungrounded_answer_escalates(monkeypatch, repo):
     )
     messages = answer_member_question(repo, member(repo), "去年の決算の内訳は？", now=NOW)
     assert ESCALATION_NOTE in messages[0].text
-    # 自由文では取り次がない（ボタンを付けるだけ）
-    assert repo.list_escalations() == []
+    # 自由文では保存しない（ボタンを付けるだけ）。取次ぎ（Escalation）はもう作らない
+    assert repo.list_escalations() == [] and repo.list_feedback() == []
     button = messages[0].quick_reply.items[-1].action
-    assert (button.label, button.data) == ("事務局に取り次ぐ", "esc|去年の決算の内訳は？")
-    # ボタンを押したときだけ起票する（二重押しでも1件）
+    assert (button.label, button.data) == ("意見箱に送る", "esc|去年の決算の内訳は？")
+    # ボタンを押したときだけ意見箱に保存する（二重押しでも1件）
     from app.assistant import handle_escalate_postback
     for _ in range(2):
         reply = handle_escalate_postback(repo, member(repo), button.data, now=NOW)
-    assert "取り次ぎました" in reply[0].text
-    escalations = repo.list_escalations(status="open")
-    assert len(escalations) == 1
-    assert escalations[0].kind == "question"
-    assert escalations[0].text == "去年の決算の内訳は？"
+    assert "意見箱に送りました" in reply[0].text
+    [item] = repo.list_feedback()
+    assert item.kind == "unanswered" and item.source == "chat"
+    assert item.text == "去年の決算の内訳は？" and item.member_id == member(repo).member_id
+    assert repo.list_escalations() == []
 
 
 def test_needs_human_escalates(monkeypatch, repo):
@@ -182,8 +182,8 @@ def test_needs_human_escalates(monkeypatch, repo):
     )
     messages = answer_member_question(repo, member(repo), "会費を分割で払いたい", now=NOW)
     assert ESCALATION_NOTE in messages[0].text
-    assert repo.list_escalations() == []
-    assert messages[0].quick_reply.items[-1].action.label == "事務局に取り次ぐ"
+    assert repo.list_escalations() == [] and repo.list_feedback() == []
+    assert messages[0].quick_reply.items[-1].action.label == "意見箱に送る"
 
 
 def test_history_is_kept_and_trimmed(monkeypatch, repo):

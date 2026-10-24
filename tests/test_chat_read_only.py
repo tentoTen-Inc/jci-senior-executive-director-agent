@@ -30,6 +30,7 @@ WRITE_METHODS = (
     "save_delivery_job", "save_delivery_log", "save_escalation", "save_audit", "upsert_proposal",
     "upsert_notice", "upsert_notice_action", "upsert_survey", "save_poll", "save_poll_response",
     "save_link_request", "save_scheduled_post", "save_doc_session", "add_doc_turn",
+    "save_feedback", "save_feedback_digest",
 )
 
 MEMBERS = {
@@ -67,10 +68,13 @@ TEXTS = [
     "欠席",
     "出席します",
     "11月例会、出席でお願いします",
-    # 連絡・取次ぎ
+    # 連絡・取次ぎ・意見
     "事務局に連絡",
     "連絡",
     "会費を分割で払いたいので相談させてください",
+    "意見箱",
+    "出欠のボタンを押しても反映されないバグがあります",
+    "日程調整をカレンダーに自動で入れる機能がほしいです",
     # 質問
     "次回の予定",
     "福島ブロックの予定を教えて",
@@ -132,7 +136,6 @@ def test_free_text_never_writes(repo, role, text, in_group):
     ("専務理事", "サマリーを更新して", "資料を作る・直す"),
     ("専務理事", "10/20 19時から理事会を登録", "予定を登録・変更"),
     ("事務局", "第8回理事会を中止", "予定を登録・変更"),
-    ("会員", "事務局に連絡", "事務局に連絡"),
 ])
 def test_write_like_text_returns_entry_button(repo, role, text, button):
     messages = handle_member_text(repo, MEMBERS[role], text, now=NOW)
@@ -146,7 +149,7 @@ def test_attendance_free_text_answers_and_offers_button(repo):
     messages = handle_member_text(repo, MEMBERS["会員"], "11月例会は仕事のため欠席でお願いします",
                                   now=NOW)
     labels = [i.action.label for i in messages[-1].quick_reply.items]
-    assert "予定と出欠" in labels and "事務局に取り次ぐ" in labels
+    assert "予定と出欠" in labels and "意見箱に送る" in labels
 
 
 def test_non_board_write_like_text_is_just_a_question(repo):
@@ -157,9 +160,16 @@ def test_non_board_write_like_text_is_just_a_question(repo):
 # --------------------------------------------------------------------------- #
 # ボタンから始めた流れ（ここでだけ書き込む）
 # --------------------------------------------------------------------------- #
-def test_contact_button_writes(repo):
-    handle_member_text(repo, MEMBERS["会員"], "menu|事務局に連絡", now=NOW)
-    assert repo.writes == ["save_escalation"]
+@pytest.mark.parametrize("text", ["menu|事務局に連絡", "menu|意見箱", "事務局に連絡", "連絡"])
+def test_contact_only_guides_to_feedback_box(repo, monkeypatch, text):
+    # 「事務局に連絡」はやめた。旧ボタン・短い文には意見箱の案内（LIFF を開くボタン）だけを返す
+    monkeypatch.setenv("LIFF_ID", "2000000000-abcdEFGH")
+    monkeypatch.setenv("LINE_LOGIN_CHANNEL_ID", "2000000000")
+    [msg] = handle_member_text(repo, MEMBERS["会員"], text, now=NOW)
+    assert "意見箱" in msg.text and "急ぎの用件は、専務に直接 LINE" in msg.text
+    [item] = msg.quick_reply.items
+    assert item.action.type == "uri" and item.action.uri.endswith("?view=feedback")
+    assert repo.writes == []
 
 
 def test_calendar_button_reads_only_the_next_message(repo, monkeypatch):

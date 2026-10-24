@@ -23,6 +23,8 @@ from .models import (
     Event,
     EventStatus,
     ExternalNotice,
+    Feedback,
+    FeedbackDigest,
     InferenceLog,
     InviteCode,
     LineGroup,
@@ -155,6 +157,13 @@ class Repository(Protocol):
     def save_scheduled_post(self, post: ScheduledPost) -> None: ...
     def list_scheduled_posts(self) -> list[ScheduledPost]: ...
 
+    # --- 意見箱 ---
+    def save_feedback(self, feedback: Feedback) -> None: ...
+    def get_feedback(self, feedback_id: str) -> Feedback | None: ...
+    def list_feedback(self) -> list[Feedback]: ...
+    def save_feedback_digest(self, digest: FeedbackDigest) -> None: ...
+    def get_feedback_digest(self) -> FeedbackDigest | None: ...
+
 
 class InMemoryRepository:
     """テスト・ローカル用のインメモリ実装。"""
@@ -171,6 +180,8 @@ class InMemoryRepository:
         self._calendar_ops: dict[str, PendingCalendarOp] = {}
         self._chat_states: dict[str, ChatState] = {}
         self._doc_sessions: dict[str, DocSession] = {}
+        self._feedback: dict[str, Feedback] = {}
+        self._feedback_digest: FeedbackDigest | None = None
         self._doc_turns: dict[str, list[DocTurn]] = {}
         self._doc_edits: dict[tuple[str, str], DocEdit] = {}
         self._proposal_creates: dict[str, PendingProposalCreate] = {}
@@ -509,6 +520,25 @@ class InMemoryRepository:
     def list_scheduled_posts(self) -> list[ScheduledPost]:
         return sorted((p.model_copy(deep=True) for p in self._scheduled_posts.values()),
                       key=lambda p: p.send_at)
+
+    # --- 意見箱 ---
+    def save_feedback(self, feedback: Feedback) -> None:
+        self._feedback[feedback.feedback_id] = feedback.model_copy(deep=True)
+
+    def get_feedback(self, feedback_id: str) -> Feedback | None:
+        item = self._feedback.get(feedback_id)
+        return item.model_copy(deep=True) if item else None
+
+    def list_feedback(self) -> list[Feedback]:
+        """新しい順。"""
+        return sorted((f.model_copy(deep=True) for f in self._feedback.values()),
+                      key=lambda f: f.created_at, reverse=True)
+
+    def save_feedback_digest(self, digest: FeedbackDigest) -> None:
+        self._feedback_digest = digest.model_copy(deep=True)
+
+    def get_feedback_digest(self) -> FeedbackDigest | None:
+        return self._feedback_digest.model_copy(deep=True) if self._feedback_digest else None
 
 
 def utcnow() -> datetime:
