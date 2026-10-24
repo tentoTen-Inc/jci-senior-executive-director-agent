@@ -19,11 +19,11 @@ from linebot.v3.messaging import (
     TextMessage,
 )
 
-from . import committee_docs, menu_lists
+from . import committee_docs, doc_session, menu_lists
 from .assistant import answer_member_question
 from .calendar_intent import HELP_TEXT as CALENDAR_HELP_TEXT
 from .calendar_intent import can_edit_calendar, looks_like_calendar_write, try_calendar_intent
-from .doc_edit_intent import NOT_BOARD_TEXT, looks_like_doc_edit
+from .doc_edit_intent import looks_like_doc_edit
 from .events import resolve_targets
 from .jpdate import month_day_time
 from .line_messages import build_attendance_request
@@ -173,8 +173,6 @@ HELP_GUIDE = (
     "・出欠の回答、事務局への連絡は、メニューのボタンからどうぞ。\n"
     "・資料の作成・更新は［資料を作る・直す］から。対象の資料を選んでから指示を送ります。"
 )
-DOCS_NOT_BOARD = NOT_BOARD_TEXT
-DOCS_COMING = "資料の作業は準備中です。次の更新で、資料を選んでから指示を送れるようになります。"
 CALENDAR_NOT_OFFICER = "予定の登録・変更は、五役・監事・事務局のみご利用いただけます。"
 CALENDAR_START = (
     "登録・変更・中止したい予定を、1通で送ってください（10分以内）。\n"
@@ -228,9 +226,7 @@ def _menu(repo: Repository, member: Member, label: str, now: datetime) -> list[M
     if label == MENU_CONTACT:
         return [record_contact(repo, member, now)]
     if label == MENU_DOCS:
-        if not committee_docs.is_board_member(member):
-            return [TextMessage(text=DOCS_NOT_BOARD)]
-        return [TextMessage(text=DOCS_COMING)]
+        return doc_session.start_menu(repo, member, now)
     if label == MENU_PROPOSALS:
         return [menu_lists.proposals_message(repo, member)]
     # 五役の「運営」タブ
@@ -282,6 +278,11 @@ def handle_member_text(
     state = None if in_group else _active_state(repo, member, now)
     if state is not None and state.mode == "calendar":
         return _calendar_turn(repo, member, t, now)
+    if state is not None and state.mode == "doc" and state.session_id:
+        # 資料の作業中は、送った文をすべてその資料への指示として扱う（設計 §4）
+        reply = doc_session.handle_turn(repo, member, t, now, state.session_id)
+        if reply is not None:
+            return reply
 
     # ---- ここから自由文: 検索・回答のみ（書き込みなし） ----
     if committee_docs.is_board_member(member) and (looks_like_create(t) or looks_like_doc_edit(t)):

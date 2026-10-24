@@ -29,7 +29,7 @@ WRITE_METHODS = (
     "save_chat_state", "save_doc_edit", "save_proposal_create", "save_line_group",
     "save_delivery_job", "save_delivery_log", "save_escalation", "save_audit", "upsert_proposal",
     "upsert_notice", "upsert_notice_action", "upsert_survey", "save_poll", "save_poll_response",
-    "save_link_request", "save_scheduled_post",
+    "save_link_request", "save_scheduled_post", "save_doc_session", "add_doc_turn",
 )
 
 MEMBERS = {
@@ -114,7 +114,6 @@ def repo(monkeypatch):
         ensure_ascii=False)))
     monkeypatch.setenv("COMMITTEE_DOCS_FOLDER", "root")
     monkeypatch.setenv("PLAN_TEMPLATE_DOC", "tmpl")
-    monkeypatch.setenv("DOC_EDIT_FROM_TEXT", "1")  # 旧来の切り替えを入れても書き込まない
     r.guarding = True
     return r
 
@@ -193,8 +192,6 @@ def test_calendar_button_requires_officer(repo):
     assert repo.get_chat_state("m_chair") is None
 
 
-def test_docs_button_for_board_and_others(repo):
-    assert "準備中" in handle_member_text(repo, MEMBERS["委員長"], "menu|資料を作る・直す",
-                                         now=NOW)[0].text
+def test_docs_button_for_non_board(repo):
     assert "理事メンバー" in handle_member_text(repo, MEMBERS["会員"], "menu|資料を作る・直す",
                                             now=NOW)[0].text

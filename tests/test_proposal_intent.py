@@ -1,4 +1,8 @@
-"""LINE の依頼で議案（事業計画書）を作る（docs/proposal-ledger-design.md L3）。"""
+"""LINE で議案（事業計画書）を作る（proposal-ledger-design.md L3・doc-session-design.md §4.1）。
+
+［資料を作る・直す］→［＋新しい事業計画書］→ 委員会・例会をボタンで選ぶ → 確認 → 作成
+→ そのまま作業セッション。
+"""
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -6,17 +10,18 @@ from pathlib import Path
 import pytest
 
 from app import committee_docs, lom_drive
-from app.doc_edit_intent import GROUP_TEXT, NOT_BOARD_TEXT
+from app.doc_edit_intent import NOT_BOARD_TEXT
 from app.member_menu import handle_member_text
 from app.models import CommitteeSeat, Event, EventStatus, EventType, Member
 from app.proposal_intent import (
     DISABLED_TEXT,
-    WHICH_EVENT_TEXT,
+    confirm_plan,
     find_event,
+    handle_new_plan_postback,
     handle_proposal_create_postback,
     looks_like_create,
     replacements,
-    try_proposal_create_intent,
+    start_new_plan,
 )
 from app.repository import InMemoryRepository
 
@@ -68,8 +73,9 @@ def drive(monkeypatch):
     return state
 
 
-def _ask(repo, member=CHAIR, text="3月例会の事業計画書を作って", **kw):
-    return try_proposal_create_intent(repo, member, text, now=NOW, **kw)
+def _ask(repo, member=CHAIR, committee="総務委員会", event_id="ev_mar"):
+    """［＋新しい事業計画書］で委員会と予定を選んだところまで（確認メッセージを返す）。"""
+    return confirm_plan(repo, member, committee, event_id, now=NOW)
 
 
 def _op_id(messages):
@@ -92,16 +98,29 @@ def test_find_event():
     assert find_event(repo, "計画書を作って", NOW) is None
 
 
-def test_refusals(drive):
+def test_new_plan_choices(drive):
     repo = _repo()
-    assert _ask(repo, MEMBER)[0].text == NOT_BOARD_TEXT
-    assert _ask(repo, in_group=True)[0].text == GROUP_TEXT
-    assert _ask(repo, text="事業計画書を作って")[0].text == WHICH_EVENT_TEXT
+    # 委員会が1つなら、そのまま例会・事業を選ぶ（これからの例会・行事・総会だけ）
+    [msg] = start_new_plan(repo, CHAIR, ["総務委員会"], NOW)
+    datas = [i.action.data for i in msg.quick_reply.items]
+    assert datas == ["prn|event|総務委員会|ev_mar", "prn|event|総務委員会|ev_dec"]
+    assert msg.quick_reply.items[0].action.label == "3月例会 3/23"
+    # 複数なら委員会から
+    [msg] = start_new_plan(repo, CHAIR, ["総務委員会", "地域未来創造委員会"], NOW)
+    assert msg.quick_reply.items[1].action.data == "prn|committee|地域未来創造委員会"
+
+
+def test_new_plan_postback_checks_permission(drive):
+    repo = _repo()
+    assert handle_new_plan_postback(repo, MEMBER, "prn|event|総務委員会|ev_mar",
+                                    NOW)[0].text == NOT_BOARD_TEXT
+    reply = handle_new_plan_postback(repo, CHAIR, "prn|event|総務委員会|ev_mar", NOW)
+    assert "作ります。よろしいですか" in reply[0].text
 
 
 def test_disabled_without_template(drive, monkeypatch):
     monkeypatch.delenv("PLAN_TEMPLATE_DOC")
-    assert _ask(_repo())[0].text == DISABLED_TEXT
+    assert start_new_plan(_repo(), CHAIR, ["総務委員会"], NOW)[0].text == DISABLED_TEXT
 
 
 def test_confirm_then_create(drive):
@@ -113,6 +132,10 @@ def test_confirm_then_create(drive):
 
     reply = handle_proposal_create_postback(repo, CHAIR, f"prc|{_op_id(messages)}|yes", now=NOW)
     assert "「【計画書】3月例会事業計画書」を作りました" in reply[0].text
+    # そのままその事業計画書の作業セッションを始める
+    assert "📝 編集中：【計画書】3月例会事業計画書" in reply[1].text
+    state = repo.get_chat_state("m13")
+    assert state.mode == "doc" and repo.get_doc_session(state.session_id).doc_id == "doc_new"
     assert drive["folders"] == [("c2", "01-例会・事業"), ("f:01-例会・事業", "2703_3月例会")]
     assert drive["copies"] == [("tmpl", "【計画書】3月例会事業計画書", "f:2703_3月例会")]
 
@@ -138,7 +161,9 @@ def test_existing_plan_is_not_duplicated(drive):
     repo = _repo()
     handle_proposal_create_postback(repo, CHAIR, f"prc|{_op_id(_ask(repo))}|yes", now=NOW)
     reply = _ask(repo)
-    assert "すでにあります" in reply[0].text and "doc_new" in reply[0].text
+    # 作らずに、すでにある事業計画書の作業を始める
+    assert "すでにあります" in reply[0].text and "doc_new" in reply[1].text
+    assert len(drive["copies"]) == 1
 
 
 def test_only_requester_and_not_expired(drive):

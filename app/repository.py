@@ -16,6 +16,9 @@ from .models import (
     Conversation,
     DeliveryJob,
     DeliveryLog,
+    DocEdit,
+    DocSession,
+    DocTurn,
     Escalation,
     Event,
     EventStatus,
@@ -29,7 +32,6 @@ from .models import (
     MemberStatus,
     NoticeAction,
     PendingCalendarOp,
-    PendingDocEdit,
     PendingProposalCreate,
     PollResponse,
     Proposal,
@@ -78,8 +80,13 @@ class Repository(Protocol):
     def get_chat_state(self, member_id: str) -> ChatState | None: ...
     def save_chat_state(self, state: ChatState) -> None: ...
     def get_calendar_op(self, op_id: str) -> PendingCalendarOp | None: ...
-    def save_doc_edit(self, op: PendingDocEdit) -> None: ...
-    def get_doc_edit(self, op_id: str) -> PendingDocEdit | None: ...
+    def save_doc_session(self, session: DocSession) -> None: ...
+    def get_doc_session(self, session_id: str) -> DocSession | None: ...
+    def add_doc_turn(self, session_id: str, turn: DocTurn) -> None: ...
+    def list_doc_turns(self, session_id: str, *, limit: int = 20) -> list[DocTurn]: ...
+    def save_doc_edit(self, edit: DocEdit) -> None: ...
+    def get_doc_edit(self, session_id: str, op_id: str) -> DocEdit | None: ...
+    def list_doc_edits(self, session_id: str) -> list[DocEdit]: ...
     def save_proposal_create(self, op: PendingProposalCreate) -> None: ...
     def get_proposal_create(self, op_id: str) -> PendingProposalCreate | None: ...
     def save_line_group(self, group: LineGroup) -> None: ...
@@ -163,7 +170,9 @@ class InMemoryRepository:
         self._gcal_sync: CalendarSyncState = CalendarSyncState()
         self._calendar_ops: dict[str, PendingCalendarOp] = {}
         self._chat_states: dict[str, ChatState] = {}
-        self._doc_edits: dict[str, PendingDocEdit] = {}
+        self._doc_sessions: dict[str, DocSession] = {}
+        self._doc_turns: dict[str, list[DocTurn]] = {}
+        self._doc_edits: dict[tuple[str, str], DocEdit] = {}
         self._proposal_creates: dict[str, PendingProposalCreate] = {}
         self._line_groups: dict[str, LineGroup] = {}
         self._jobs: dict[str, DeliveryJob] = {}
@@ -284,12 +293,29 @@ class InMemoryRepository:
         op = self._calendar_ops.get(op_id)
         return op.model_copy(deep=True) if op else None
 
-    def save_doc_edit(self, op: PendingDocEdit) -> None:
-        self._doc_edits[op.op_id] = op.model_copy(deep=True)
+    def save_doc_session(self, session: DocSession) -> None:
+        self._doc_sessions[session.session_id] = session.model_copy(deep=True)
 
-    def get_doc_edit(self, op_id: str) -> PendingDocEdit | None:
-        op = self._doc_edits.get(op_id)
-        return op.model_copy(deep=True) if op else None
+    def get_doc_session(self, session_id: str) -> DocSession | None:
+        session = self._doc_sessions.get(session_id)
+        return session.model_copy(deep=True) if session else None
+
+    def add_doc_turn(self, session_id: str, turn: DocTurn) -> None:
+        self._doc_turns.setdefault(session_id, []).append(turn.model_copy(deep=True))
+
+    def list_doc_turns(self, session_id: str, *, limit: int = 20) -> list[DocTurn]:
+        return [t.model_copy(deep=True) for t in self._doc_turns.get(session_id, [])[-limit:]]
+
+    def save_doc_edit(self, edit: DocEdit) -> None:
+        self._doc_edits[(edit.session_id, edit.op_id)] = edit.model_copy(deep=True)
+
+    def get_doc_edit(self, session_id: str, op_id: str) -> DocEdit | None:
+        edit = self._doc_edits.get((session_id, op_id))
+        return edit.model_copy(deep=True) if edit else None
+
+    def list_doc_edits(self, session_id: str) -> list[DocEdit]:
+        edits = [e for (sid, _), e in self._doc_edits.items() if sid == session_id]
+        return [e.model_copy(deep=True) for e in sorted(edits, key=lambda e: e.created_at)]
 
     def save_proposal_create(self, op: PendingProposalCreate) -> None:
         self._proposal_creates[op.op_id] = op.model_copy(deep=True)

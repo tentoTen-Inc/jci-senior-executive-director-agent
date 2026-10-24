@@ -1,8 +1,8 @@
-"""LINE の依頼で議案（事業計画書）を作る（docs/proposal-ledger-design.md §6）。
+"""LINE で議案（事業計画書）を作る（docs/proposal-ledger-design.md §6・doc-session §4.1）。
 
-理事メンバーが個別トークで「3月例会の事業計画書を作って」と送ると、委員会と年間スケジュールの
-例会・事業を決めて**確認メッセージ（作成する／やめる）を返すだけ**にする。
-本人が「作成する」を押したとき（postback `prc|<op_id>|yes`）に、
+［資料を作る・直す］→［＋新しい事業計画書］から、委員会と年間スケジュールの例会・事業を
+ボタンで選び（postback `prn|...`）、**確認メッセージ（作成する／やめる）を返すだけ**にする。
+自由文からは作らない。本人が「作成する」を押したとき（postback `prc|<op_id>|yes`）に、
 
 1. 委員会フォルダの `01-例会・事業/YYMM_名前/` を作り、テンプレートをコピーして
    `【計画書】名前事業計画書` と名付ける
@@ -10,6 +10,7 @@
 2. 基本情報（ファイル名・委員会名・担当副理事長・委員長・文書作成人・作成日）と実施日を記入し、
    テンプレートの古い年度表記を直す（書き込みは doc-editor: committee_docs）
 3. 議案台帳にエントリーとして登録し、年間スケジュールの予定と結ぶ
+4. そのままその事業計画書の作業セッションを始める（続けて「背景と目的を書いて」と送れる）
 """
 from __future__ import annotations
 
@@ -29,7 +30,7 @@ from linebot.v3.messaging import (
 
 from . import committee_docs, lom_drive
 from .audit import write_audit
-from .doc_edit_intent import GROUP_TEXT, NOT_BOARD_TEXT, choose_committee
+from .doc_edit_intent import NOT_BOARD_TEXT
 from .jpdate import weekday
 from .models import (
     Event,
@@ -132,42 +133,62 @@ def _confirm(op: PendingProposalCreate) -> TextMessage:
     return TextMessage(text=text, quick_reply=qr)
 
 
-def try_proposal_create_intent(
-    repo: Repository, member: Member, text: str, *, now: datetime, in_group: bool = False,
-) -> list[Message] | None:
-    """議案を作る依頼なら確認メッセージ（または聞き返し）を返す。対象外なら None。"""
-    if not looks_like_create(text):
-        return None
-    if not committee_docs.is_board_member(member):
-        return [TextMessage(text=NOT_BOARD_TEXT)]
-    if in_group:
-        return [TextMessage(text=GROUP_TEXT)]
+ACTION_NEW = "prn"  # postback: prn|committee|<委員会> / prn|event|<委員会>|<event_id>
+#: 選べる予定の数（クイックリプライの上限 13）
+MAX_EVENT_CHOICES = 12
+
+
+def _quick(text: str, choices: list[tuple[str, str]]) -> TextMessage:
+    return TextMessage(text=text, quick_reply=QuickReply(items=[
+        QuickReplyItem(action=PostbackAction(label=label[:20], data=data, display_text=label[:20]))
+        for label, data in choices[:13]]))
+
+
+def upcoming_plan_events(repo: Repository, now: datetime) -> list[Event]:
+    """事業計画書を作る対象になる、これからの例会・行事・総会（開催順）。"""
+    events = [e for e in repo.list_events()
+              if e.type in EVENT_TYPES and e.status != EventStatus.cancelled
+              and e.datetime_start >= now - timedelta(days=1)]
+    return sorted(events, key=lambda e: e.datetime_start)
+
+
+def start_new_plan(repo: Repository, member: Member, committees: list[str],
+                   now: datetime) -> list[Message]:
+    """［＋新しい事業計画書］: 委員会（複数なら選ぶ）→ 例会・事業を選ぶ。"""
     if not is_enabled():
         return [TextMessage(text=DISABLED_TEXT)]
-
-    try:
-        folders = committee_docs.committee_folders(committee_docs._token())
-    except Exception:  # noqa: BLE001
-        logger.exception("委員会フォルダの読み込みに失敗しました")
-        return [TextMessage(text=FAILED_TEXT)]
-    candidates = committee_docs.editable_committees(member, list(folders))
-    if not candidates:
+    if not committees:
         return [TextMessage(text="議案を作れる委員会が見つかりませんでした。")]
-    committee = choose_committee(member, text, candidates)
-    if isinstance(committee, list):
-        names = "\n".join(f"・{c}" for c in committee)
-        return [TextMessage(text=(
-            f"どの委員会の議案ですか？委員会名を添えて、もう一度お送りください。\n\n{names}"))]
-    event = find_event(repo, text, now)
-    if event is None:
-        return [TextMessage(text=WHICH_EVENT_TEXT)]
-    found = _existing(repo, committee, event.event_id)
-    if found is not None:
-        return [TextMessage(text=(
-            f"{committee}の「{event_name(event)}」の事業計画書はすでにあります。\n{found.storage_uri}\n\n"
-            "内容を書くときは「〇〇な例会にしたいので背景と目的を書いて」のようにお送りください。"
-        ))]
+    if len(committees) > 1:
+        return [_quick("どの委員会の事業計画書を作りますか？",
+                       [(c, f"{ACTION_NEW}|committee|{c}") for c in committees])]
+    return choose_event(repo, member, committees[0], now)
 
+
+def choose_event(repo: Repository, member: Member, committee: str,
+                 now: datetime) -> list[Message]:
+    events = upcoming_plan_events(repo, now)[:MAX_EVENT_CHOICES]
+    if not events:
+        return [TextMessage(text="これからの例会・事業が年間スケジュールに見つかりませんでした。")]
+    return [_quick(f"{committee}の、どの例会・事業の事業計画書を作りますか？", [
+        (f"{event_name(e)} {e.datetime_start:%-m/%-d}",
+         f"{ACTION_NEW}|event|{committee}|{e.event_id}") for e in events])]
+
+
+def confirm_plan(repo: Repository, member: Member, committee: str, event_id: str,
+                 now: datetime) -> list[Message]:
+    """選んだ委員会・予定の事業計画書を作る確認（すでにあればその資料の作業を始める）。"""
+    event = repo.get_event(event_id)
+    if event is None or event.type not in EVENT_TYPES:
+        return [TextMessage(text="その予定が見つかりませんでした。")]
+    found = _existing(repo, committee, event.event_id)
+    if found is not None and found.doc_id:
+        from . import doc_session
+
+        title = f"{PLAN_PREFIX}{found.title}事業計画書"
+        note = f"{committee}の「{event_name(event)}」の事業計画書はすでにあります。"
+        return [TextMessage(text=note),
+                *doc_session.open_session(repo, member, found.doc_id, title, committee, now)]
     title, folder_name, doc_name = _names(event)
     op = PendingProposalCreate(
         op_id=f"pco_{uuid.uuid4().hex[:10]}", member_id=member.member_id, committee=committee,
@@ -176,6 +197,20 @@ def try_proposal_create_intent(
     )
     repo.save_proposal_create(op)
     return [_confirm(op)]
+
+
+def handle_new_plan_postback(repo: Repository, member: Member, data: str,
+                             now: datetime) -> list[Message]:
+    """`prn|committee|<委員会>` / `prn|event|<委員会>|<event_id>`。"""
+    parts = data.split("|")
+    committee = parts[2] if len(parts) >= 3 else ""
+    if not committee or not committee_docs.can_edit(member, committee):
+        return [TextMessage(text=NOT_BOARD_TEXT)]
+    if parts[1] == "committee" and len(parts) == 3:
+        return choose_event(repo, member, committee, now)
+    if parts[1] == "event" and len(parts) == 4:
+        return confirm_plan(repo, member, committee, parts[3], now)
+    return [TextMessage(text="この操作は無効です。")]
 
 
 # --------------------------------------------------------------------------- #
@@ -246,10 +281,10 @@ def _create(repo: Repository, member: Member, op: PendingProposalCreate,
     repo.upsert_proposal(proposal)
     write_audit(repo, actor=f"line:{member.member_id}", action="proposal.create",
                 target=proposal.proposal_id, detail=f"{op.committee} / {op.doc_name}")
-    return [TextMessage(text=(
-        f"「{op.doc_name}」を作りました。\n{url}\n\n"
-        "続けて「〇〇な例会にしたいので背景と目的を書いて」のようにお送りいただくと、案を作って記入します。"
-    ))]
+    from . import doc_session
+
+    return [TextMessage(text=f"「{op.doc_name}」を作りました。\n{url}"),
+            *doc_session.open_session(repo, member, doc_id, op.doc_name, op.committee, now)]
 
 
 def handle_proposal_create_postback(
