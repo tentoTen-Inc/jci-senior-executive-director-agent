@@ -227,30 +227,114 @@ def _field(name: str, cell: dict, editable: bool, label: dict) -> DocField:
                     start=start, end=max(start, end), style=style)
 
 
-def extract_fields(doc: dict) -> list[DocField]:
-    """ドキュメントの表から項目を取り出す（2列の表と、見出し行のある表）。"""
+#: 4列の項目表（「◯ファイル名｜値｜◯委員会名｜値」）の項目名の印
+_KEY_MARKS = ("◯", "○")
+#: 審議の記録の表の前にある見出し（「【五役会議①】開催日：…」）
+_TABLE_HEADING = re.compile(r"^【(.+?)】")
+#: 小見出しとみなす1行の長さの上限（「■問題の原因」「対内対象者」など）
+_SUBHEADING_MAX = 20
+
+
+def _paragraph_text(element: dict) -> str:
+    para = element.get("paragraph") or {}
+    return "".join(e.get("textRun", {}).get("content", "")
+                   for e in para.get("elements", [])).strip()
+
+
+def _label(cell: dict) -> str:
+    return _cell_text(cell).replace("\n", "")
+
+
+def _is_subheading(text: str) -> bool:
+    return bool(text) and "\n" not in text and len(text) <= _SUBHEADING_MAX
+
+
+def _two_column(rows: list[list[dict]]) -> list[DocField]:
+    """2列の表。左のセルが空の行は直前の見出しの続き（結合セル）として扱い、
+    右のセルが「■問題」のような1行だけで次の行が続きなら、それを小見出しにして次の行を
+    「見出し・問題」の項目にする（事業計画書の事業要項）。"""
     fields: list[DocField] = []
+    label, label_cell, i = "", None, 0
+    while i < len(rows):
+        cells = rows[i]
+        if _label(cells[0]):
+            label, label_cell = _label(cells[0]), cells[0]
+        if not label:
+            i += 1
+            continue
+        editable = not label.startswith(READONLY_PREFIX)
+        text = _cell_text(cells[1])
+        follows = i + 1 < len(rows) and not _label(rows[i + 1][0])
+        if follows and _is_subheading(text):
+            sub = text.lstrip("■").strip()
+            fields.append(_field(f"{label}・{sub}", rows[i + 1][1], editable, label_cell))
+            i += 2
+            continue
+        fields.append(_field(label, cells[1], editable, label_cell))
+        i += 1
+    return fields
+
+
+def _key_value(rows: list[list[dict]]) -> list[DocField]:
+    """4列などの項目表（「項目｜値｜項目｜値」）。項目名の先頭の「◯」は外す。"""
+    fields: list[DocField] = []
+    for cells in rows:
+        for key, value in zip(cells[0::2], cells[1::2], strict=False):
+            name = _label(key).lstrip("".join(_KEY_MARKS)).strip()
+            if name:
+                fields.append(_field(name, value, not name.startswith(READONLY_PREFIX), key))
+    return fields
+
+
+def _grid(rows: list[list[dict]], prefix: str) -> list[DocField]:
+    """見出し行のある表（「行の見出し・列の見出し」。前に【会議名】の見出しがあれば頭に付ける）。"""
+    fields: list[DocField] = []
+    headers = [_label(c) for c in rows[0]]
+    for cells in rows[1:]:
+        label = _label(cells[0])
+        if not label:
+            continue
+        for header, cell in zip(headers[1:], cells[1:], strict=False):
+            if header:
+                name = f"{prefix}{label}・{header}"
+                fields.append(_field(name, cell, not label.startswith(READONLY_PREFIX), cells[0]))
+    return fields
+
+
+def _is_key_value(rows: list[list[dict]], columns: int) -> bool:
+    if columns % 2 or columns < 4 or not rows:
+        return False
+    first = _label(rows[0][0])
+    return first.startswith(_KEY_MARKS) or len(rows) == 1
+
+
+def extract_fields(doc: dict) -> list[DocField]:
+    """ドキュメントの表から項目を取り出す（docs/proposal-ledger-design.md §3）。
+
+    - 2列の表: 「項目名｜内容」。結合された見出しの続きの行・■小見出しにも対応
+    - 項目表: 「◯項目｜値｜◯項目｜値」
+    - 見出し行のある表: 「行の見出し・列の見出し」（年間スケジュール・審議の記録）
+    """
+    fields: list[DocField] = []
+    heading = ""
     for element in _body(doc):
+        if "paragraph" in element:
+            text = _paragraph_text(element)
+            if text:
+                heading = text
+            continue
         table = element.get("table")
         if table is None:
             continue
         rows = [r.get("tableCells", []) for r in table.get("tableRows", [])]
-        if table.get("columns") == 2:
-            for cells in rows:
-                label = _cell_text(cells[0]).replace("\n", "")
-                if label:
-                    fields.append(_field(label, cells[1], not label.startswith(READONLY_PREFIX),
-                                         cells[0]))
-        elif table.get("columns", 0) >= 3 and len(rows) >= 2:
-            headers = [_cell_text(c).replace("\n", "") for c in rows[0]]
-            for cells in rows[1:]:
-                label = _cell_text(cells[0]).replace("\n", "")
-                if not label:
-                    continue
-                for header, cell in zip(headers[1:], cells[1:], strict=False):
-                    if header:
-                        fields.append(_field(f"{label}・{header}", cell,
-                                             not label.startswith(READONLY_PREFIX), cells[0]))
+        columns = table.get("columns", 0)
+        if columns == 2:
+            fields += _two_column(rows)
+        elif _is_key_value(rows, columns):
+            fields += _key_value(rows)
+        elif columns >= 3 and len(rows) >= 2:
+            match = _TABLE_HEADING.match(heading)
+            fields += _grid(rows, f"{match.group(1)}・" if match else "")
     # 同じ名前の項目が複数あると書き換え先が決まらないので、2つ目以降に番号を付ける
     seen: dict[str, int] = {}
     for f in fields:
