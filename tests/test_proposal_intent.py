@@ -164,4 +164,6 @@ def test_replacements_use_event_year():
 
 def test_member_text_routes_create_before_doc_edit(drive):
     messages = handle_member_text(_repo(), CHAIR, "3月例会の事業計画書を作って", now=NOW)
-    assert "作ります。よろしいですか" in messages[0].text
+    # 自由文では作らない。［資料を作る・直す］のボタンを返すだけ
+    assert messages[0].quick_reply.items[0].action.data == "menu|資料を作る・直す"
+    assert drive["copies"] == []

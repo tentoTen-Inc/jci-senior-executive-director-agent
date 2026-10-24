@@ -107,6 +107,11 @@ def verify_and_link(
     state.failed_attempts = 0
     repo.save_link_state(state)
 
+    # 立場に合ったリッチメニュー（理事・五役は作業のボタン付き）に付け替える
+    from . import rich_menu_link
+
+    rich_menu_link.link(repo, member)
+
     return LinkResult(
         ok=True,
         member=member,

@@ -319,6 +319,20 @@ class PendingProposalCreate(BaseModel):
     status: str = "pending"  # pending | done | declined | expired
 
 
+class ChatState(BaseModel):
+    """LINE の個別トークの状態（docs/doc-session-design.md §4.2）。
+
+    既定は質問（書き込みなし）。リッチメニューのボタンで始めた作業の間だけ
+    `calendar` / `doc` になる。
+    """
+
+    member_id: str
+    mode: str = "question"  # question | calendar | doc
+    session_id: str | None = None  # mode=doc のときの作業セッション
+    expires_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
 class Attendance(BaseModel):
     event_id: str
     member_id: str
@@ -367,6 +381,8 @@ class Settings(BaseModel):
     #: 運用開始日（年度の始まり）。これより前のイベントは管理画面の一覧に既定で出さず、
     #: カレンダーからも取り込まない（データは消さない）。2027年度は 2027-01-01。
     operation_start: date | None = None
+    #: 立場ごとのリッチメニューの ID（member / board / officer。scripts/setup_rich_menu.py が登録）
+    rich_menus: dict[str, str] = Field(default_factory=dict)
 
 
 class DeliveryJob(BaseModel):

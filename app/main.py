@@ -56,6 +56,7 @@ from . import (
 )
 from . import lake_api as lake_api_module
 from .admin_api import router as admin_router
+from .assistant import ACTION_ESCALATE, handle_escalate_postback
 from .calendar_import import pull_changes
 from .calendar_intent import ACTION_CAL, handle_calendar_postback
 from .calendar_sync import retry_pending
@@ -394,6 +395,8 @@ def handle_postback(user_id: str, data: str) -> list[Message]:
         return handle_doc_edit_postback(repo, member, data, now=datetime.now())
     if data.startswith(f"{ACTION_CREATE}|"):
         return handle_proposal_create_postback(repo, member, data, now=datetime.now())
+    if data.startswith(f"{ACTION_ESCALATE}|"):
+        return handle_escalate_postback(repo, member, data, now=datetime.now())
     if data.startswith(f"{ai_feedback.ACTION_FEEDBACK}|"):
         return ai_feedback.handle_feedback_postback(member, data)
     if data.startswith(f"{ACTION_NOTICE_DONE}|"):

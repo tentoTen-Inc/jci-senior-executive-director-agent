@@ -1,7 +1,8 @@
 """会員の自由文問い合わせへの応答（docs/nl-assistant-design.md, F8）。
 
 - 自LOM情報（`rag.build_context`）だけを根拠に Gemini が答える（F8-1/F8-2）。
-- 根拠不足・人の対応が必要なら Escalation を起票して取次ぐ（F8-3）。
+- 根拠不足・人の対応が必要なら［事務局に取り次ぐ］ボタンを付け、押したときだけ Escalation を
+  起票する（F8-3。自由文では書き込まない: docs/doc-session-design.md §1）。
 - 他会員の個人情報はコンテキストに載せない（F8-4 の一次防御は rag 側）。
 - 直近のやり取りを保持して文脈を繋ぐ（F8-5）。
 """
@@ -12,7 +13,13 @@ import time
 import uuid
 from datetime import datetime
 
-from linebot.v3.messaging import Message, TextMessage
+from linebot.v3.messaging import (
+    Message,
+    PostbackAction,
+    QuickReply,
+    QuickReplyItem,
+    TextMessage,
+)
 
 from . import ai_feedback, drive_knowledge, lake, lake_knowledge
 from .inference import record_inference
@@ -32,7 +39,12 @@ logger = logging.getLogger("jci-agent.assistant")
 #: 保持する会話ターン数（直近3往復）
 MAX_TURNS = 6
 
-ESCALATION_NOTE = "この件は事務局に取次ぎました。担当者から折り返しご連絡します。"
+ESCALATION_NOTE = "この件を事務局に取り次ぐ場合は、下の［事務局に取り次ぐ］を押してください。"
+ESCALATED_TEXT = "事務局に取り次ぎました。担当者から折り返しご連絡します。"
+ACTION_ESCALATE = "esc"
+ESCALATE_LABEL = "事務局に取り次ぐ"
+#: postback のデータの上限（300字）に収めるため、取り次ぐ質問はこの長さまで
+ESCALATE_TEXT_MAX = 250
 
 
 def _history_text(conversation: Conversation | None) -> str:
@@ -104,8 +116,8 @@ def answer_member_question(
     text = result.answer
     # 本文の [1] 等が何を指すか分かるよう、出典の一覧（ファイルは開けるリンク）を付ける
     footer = lake_knowledge.citation_footer(repo, chunks, result.answer, member.line_user_id)
-    if result.needs_human or not result.grounded:
-        _escalate(repo, member, question, now=now)
+    escalate = result.needs_human or not result.grounded
+    if escalate:
         text = f"{text}\n\n{ESCALATION_NOTE}"
     # 会話の記憶にはリンク等を入れない（次の質問の文脈には本文だけで足りる）
     _remember(repo, member, question, text, now=now)
@@ -122,4 +134,24 @@ def answer_member_question(
             timing=timing,
         )
         message = ai_feedback.with_feedback_buttons(message, answer_id)
+    if escalate:
+        items = list(message.quick_reply.items) if message.quick_reply else []
+        message.quick_reply = QuickReply(items=[*items, QuickReplyItem(action=PostbackAction(
+            label=ESCALATE_LABEL, data=f"{ACTION_ESCALATE}|{question[:ESCALATE_TEXT_MAX]}",
+            display_text=ESCALATE_LABEL))])
     return [message]
+
+
+def handle_escalate_postback(
+    repo: Repository, member: Member, data: str, *, now: datetime
+) -> list[Message]:
+    """［事務局に取り次ぐ］（`esc|<質問>`）を押したときだけ Escalation を起票する。"""
+    question = data.split("|", 1)[1].strip() if "|" in data else ""
+    if not question:
+        return [TextMessage(text="この操作は無効です。")]
+    # 同じ質問の二重押しでは2件にしない
+    for esc in repo.list_escalations(status="open"):
+        if esc.member_id == member.member_id and esc.text == question:
+            return [TextMessage(text=ESCALATED_TEXT)]
+    _escalate(repo, member, question, now=now)
+    return [TextMessage(text=ESCALATED_TEXT)]

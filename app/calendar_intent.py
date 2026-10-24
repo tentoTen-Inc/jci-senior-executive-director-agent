@@ -238,10 +238,16 @@ def _plan_cancel(member: Member, event: Event, now: datetime):
 
 
 def try_calendar_intent(
-    repo: Repository, member: Member, text: str, *, now: datetime
+    repo: Repository, member: Member, text: str, *, now: datetime, explicit: bool = False,
 ) -> list[Message] | None:
-    """予定操作の文なら確認メッセージ（または聞き返し）を返す。対象外なら None。"""
-    if not can_edit_calendar(member) or not looks_like_calendar_write(text):
+    """予定操作の文なら確認メッセージ（または聞き返し）を返す。対象外なら None。
+
+    explicit: ［予定を登録・変更］ボタンの後の1通（書き込みの語が無くても予定の指示として読む）。
+    自由文からは呼ばない（docs/doc-session-design.md §1）。
+    """
+    if not can_edit_calendar(member):
+        return None
+    if not explicit and not looks_like_calendar_write(text):
         return None
     candidates = _candidates(repo, now)
     outcome = parse_calendar_intent(text, _events_text(candidates), now)

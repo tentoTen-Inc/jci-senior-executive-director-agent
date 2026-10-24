@@ -11,6 +11,7 @@ from .models import (
     Attendance,
     AuditLog,
     CalendarSyncState,
+    ChatState,
     Conversation,
     DeliveryJob,
     DeliveryLog,
@@ -47,6 +48,7 @@ COL_ATTENDANCES = "attendances"
 COL_POLICIES = "reminderPolicies"
 COL_SETTINGS = "settings"
 COL_CALENDAR_OPS = "calendarOps"
+COL_CHAT_STATES = "chatStates"
 COL_DOC_EDITS = "pendingDocEdits"
 COL_PROPOSAL_CREATES = "pendingProposalCreates"
 COL_LINE_GROUPS = "lineGroups"
@@ -183,6 +185,14 @@ class FirestoreRepository:
 
     def save_calendar_op(self, op: PendingCalendarOp) -> None:
         self._db.collection(COL_CALENDAR_OPS).document(op.op_id).set(op.model_dump(mode="json"))
+
+    def get_chat_state(self, member_id: str) -> ChatState | None:
+        snap = self._db.collection(COL_CHAT_STATES).document(member_id).get()
+        return ChatState.model_validate(snap.to_dict()) if snap.exists else None
+
+    def save_chat_state(self, state: ChatState) -> None:
+        self._db.collection(COL_CHAT_STATES).document(state.member_id).set(
+            state.model_dump(mode="json"))
 
     def get_calendar_op(self, op_id: str) -> PendingCalendarOp | None:
         snap = self._db.collection(COL_CALENDAR_OPS).document(op_id).get()

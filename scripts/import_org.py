@@ -87,6 +87,13 @@ def main() -> int:
     for c in changes:
         if c.action != "unchanged":
             repo.upsert_member(c.member)
+    # 役職・所属が変わった LINE 連携済みの会員は、立場に合ったリッチメニューに付け替える
+    from app import rich_menu_link
+
+    relinked = [rich_menu_link.link(repo, c.member) for c in changes
+                if c.action == "update" and c.member.line_user_id]
+    if any(relinked):
+        print(f"リッチメニューを付け替えました: {sum(1 for k in relinked if k)}名")
     if args.operation_start:
         settings = repo.get_settings()
         settings.operation_start = args.operation_start

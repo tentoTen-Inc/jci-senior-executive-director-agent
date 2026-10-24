@@ -297,10 +297,21 @@ def test_yes_twice_applies_once(repo, monkeypatch, cal):
 # --------------------------------------------------------------------------- #
 # LINE の入口（テキスト→確認→postback）
 # --------------------------------------------------------------------------- #
-def test_webhook_flow_prefers_calendar_over_schedule_keyword(repo, monkeypatch, cal):
-    """「予定」を含んでも、役員の書き込み文は次回予定の表示より先に予定操作として扱う。"""
+def test_webhook_flow_free_text_only_guides(repo, monkeypatch, cal):
+    """自由文の予定操作は反映も確認もせず、［予定を登録・変更］のボタンを返すだけ（設計 §2）。"""
     _llm(monkeypatch, action="create", type="委員会", title="総務委員会",
          start="2026-10-27T19:00", confident=True)
+    msgs = main.handle_text_message("U_sed", "27日19時に総務委員会の予定を追加して")
+    assert msgs[0].quick_reply.items[0].action.data == "menu|予定を登録・変更"
+    assert not any(e.title == "総務委員会" for e in repo.list_events())
+
+
+def test_webhook_flow_after_calendar_button(repo, monkeypatch, cal):
+    """［予定を登録・変更］の後の1通だけ予定の指示として読み、確認してから反映する。"""
+    _llm(monkeypatch, action="create", type="委員会", title="総務委員会",
+         start="2026-10-27T19:00", confident=True)
+    start = main.handle_postback("U_sed", "menu|予定を登録・変更")
+    assert "1通で送ってください" in start[0].text
     msgs = main.handle_text_message("U_sed", "27日19時に総務委員会の予定を追加して")
     assert "次の予定を登録します" in msgs[0].text
 

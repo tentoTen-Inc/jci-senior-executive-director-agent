@@ -161,6 +161,10 @@ def approve(repo: Repository, line_user_id: str, actor: str, now: datetime,
             "decided_at": now, "decided_by": actor}))
     write_audit(repo, actor=actor, action="link.approve", target=member_id,
                 detail=f"{member.name} ← {request.display_name if request else line_user_id}")
+    # 立場に合ったリッチメニュー（理事・五役は作業のボタン付き）に付け替える
+    from . import rich_menu_link
+
+    rich_menu_link.link(repo, member)
     try:
         line_push.push_text(line_user_id, (
             f"{member.name} さん、LINE 連携が完了しました。\n"
