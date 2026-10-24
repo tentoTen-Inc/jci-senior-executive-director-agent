@@ -119,7 +119,13 @@ def test_build_requests_from_the_back_and_keeps_style():
     # スローガンの太字を付け直す（範囲は UTF-16 の長さ）
     style = [r["updateTextStyle"] for r in requests if "updateTextStyle" in r][-1]
     assert style["range"] == {"startIndex": 86, "endIndex": 86 + len("未来へつなぐ一歩")}
-    assert style["textStyle"]["bold"] is True and style["fields"] == "bold,fontSize"
+    assert style["textStyle"]["bold"] is True
+    assert style["fields"] == "bold,fontSize,weightedFontFamily"
+    # 空欄のセルは書式を持たないので、同じ行の見出しの大きさ・フォントに合わせる（10pt）
+    analysis = [r["updateTextStyle"] for r in requests if "updateTextStyle" in r][0]
+    assert analysis["range"]["startIndex"] == 96
+    assert analysis["textStyle"]["fontSize"] == {"magnitude": 10, "unit": "PT"}
+    assert "bold" not in analysis["textStyle"]
 
 
 def test_apply_sends_required_revision(monkeypatch):

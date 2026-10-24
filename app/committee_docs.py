@@ -211,12 +211,20 @@ def _cell_style(cell: dict) -> dict:
     return {}
 
 
-def _field(name: str, cell: dict, editable: bool) -> DocField:
+#: 空欄のセルは文字の大きさ・フォントを持たないことがあるので、同じ行の見出しから借りる項目
+_BORROWED_STYLE = ("fontSize", "weightedFontFamily")
+
+
+def _field(name: str, cell: dict, editable: bool, label: dict) -> DocField:
     content = cell.get("content", [])
     start = content[0]["startIndex"] if content else cell["startIndex"] + 1
     end = content[-1]["endIndex"] - 1 if content else start
+    style = _cell_style(cell)
+    for key in _BORROWED_STYLE:
+        if key not in style and key in (borrowed := _cell_style(label)):
+            style[key] = borrowed[key]
     return DocField(name=name, text=_cell_text(cell), editable=editable,
-                    start=start, end=max(start, end), style=_cell_style(cell))
+                    start=start, end=max(start, end), style=style)
 
 
 def extract_fields(doc: dict) -> list[DocField]:
@@ -231,7 +239,8 @@ def extract_fields(doc: dict) -> list[DocField]:
             for cells in rows:
                 label = _cell_text(cells[0]).replace("\n", "")
                 if label:
-                    fields.append(_field(label, cells[1], not label.startswith(READONLY_PREFIX)))
+                    fields.append(_field(label, cells[1], not label.startswith(READONLY_PREFIX),
+                                         cells[0]))
         elif table.get("columns", 0) >= 3 and len(rows) >= 2:
             headers = [_cell_text(c).replace("\n", "") for c in rows[0]]
             for cells in rows[1:]:
@@ -241,7 +250,7 @@ def extract_fields(doc: dict) -> list[DocField]:
                 for header, cell in zip(headers[1:], cells[1:], strict=False):
                     if header:
                         fields.append(_field(f"{label}・{header}", cell,
-                                             not label.startswith(READONLY_PREFIX)))
+                                             not label.startswith(READONLY_PREFIX), cells[0]))
     # 同じ名前の項目が複数あると書き換え先が決まらないので、2つ目以降に番号を付ける
     seen: dict[str, int] = {}
     for f in fields:
