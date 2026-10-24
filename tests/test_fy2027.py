@@ -51,7 +51,7 @@ def test_new_members_get_next_ids_and_primary_committee():
     changes = plan(existing, _entries(
         {"name": "遠藤 孝行"},
         {"name": "渡部 源大", "committees": [
-            {"committee": "組織向上委員会", "role": "副委員長"},
+            {"committee": "組織未来推進委員会", "role": "副委員長"},
             {"committee": "地域未来創造委員会", "role": "委員"}]},
         {"name": "嶋崎 真敬", "member_type": "youth_support",
          "committees": [{"committee": "地域未来創造委員会", "role": "委員"}]},
@@ -60,8 +60,8 @@ def test_new_members_get_next_ids_and_primary_committee():
     assert [m.member_id for m in created] == ["m3", "m4"]
     genta = created[0]
     # 先頭が主たる所属
-    assert (genta.committee, genta.committee_role) == ("組織向上委員会", "副委員長")
-    assert genta.committee_names == {"組織向上委員会", "地域未来創造委員会"}
+    assert (genta.committee, genta.committee_role) == ("組織未来推進委員会", "副委員長")
+    assert genta.committee_names == {"組織未来推進委員会", "地域未来創造委員会"}
 
 
 def test_rerun_is_unchanged():
@@ -103,11 +103,11 @@ def _member(mid, name, *, seats=(), mtype=MemberType.regular, line=True, **kw):
 
 def test_committee_scope_includes_concurrent_members():
     repo = InMemoryRepository()
-    repo.upsert_member(_member("a", "遠藤 大介", seats=[("組織向上委員会", "委員長")]))
+    repo.upsert_member(_member("a", "遠藤 大介", seats=[("組織未来推進委員会", "委員長")]))
     repo.upsert_member(_member("b", "村尾 碧", seats=[("総務委員会", "副委員長"),
-                                                      ("組織向上委員会", "委員")]))
+                                                      ("組織未来推進委員会", "委員")]))
     repo.upsert_member(_member("c", "櫻井 駿太", seats=[("総務委員会", "委員長")]))
-    scope = TargetScope(kind=TargetScopeKind.committee, value=["組織向上委員会"])
+    scope = TargetScope(kind=TargetScopeKind.committee, value=["組織未来推進委員会"])
     assert {m.member_id for m in resolve_scope(repo, scope)} == {"a", "b"}  # 兼務の村尾さんも届く
 
 
@@ -125,15 +125,15 @@ def test_youth_support_member_is_deliverable_but_support_is_not():
 
 
 def test_rag_lists_all_committees():
-    m = _member("b", "村尾 碧", seats=[("総務委員会", "副委員長"), ("組織向上委員会", "委員")])
+    m = _member("b", "村尾 碧", seats=[("総務委員会", "副委員長"), ("組織未来推進委員会", "委員")])
     text = "\n".join(rag._self_lines(m))
-    assert "所属委員会: 総務委員会（副委員長）、組織向上委員会（委員）" in text
+    assert "所属委員会: 総務委員会（副委員長）、組織未来推進委員会（委員）" in text
 
 
 def test_editing_primary_committee_keeps_concurrent_seats():
     repo = InMemoryRepository()
     repo.upsert_member(_member("b", "村尾 碧", seats=[("総務委員会", "副委員長"),
-                                                      ("組織向上委員会", "委員")],
+                                                      ("組織未来推進委員会", "委員")],
                                committee="総務委員会", committee_role="副委員長"))
     set_repo(repo)
     try:
@@ -141,7 +141,7 @@ def test_editing_primary_committee_keeps_concurrent_seats():
     finally:
         set_repo(None)
     seats = [(s["committee"], s["role"]) for s in res.json()["committees"]]
-    assert seats == [("総務委員会", "委員長"), ("組織向上委員会", "委員")]
+    assert seats == [("総務委員会", "委員長"), ("組織未来推進委員会", "委員")]
 
 
 # --------------------------------------------------------------------------- #

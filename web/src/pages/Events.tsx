@@ -503,7 +503,7 @@ function EventForm({
             <Field label={f.scope_kind === "committee" ? "委員会の名前（「、」か「,」で区切る）" : "役職（「、」か「,」で区切る）"}>
               <input
                 className="w-full"
-                placeholder={f.scope_kind === "committee" ? "例: 総務委員会、コト創り委員会" : "例: 理事長、副理事長、専務理事"}
+                placeholder={f.scope_kind === "committee" ? "例: 総務委員会、組織未来推進委員会" : "例: 理事長、副理事長、専務理事"}
                 value={f.scope_value.join("、")}
                 onChange={(e) =>
                   set({
