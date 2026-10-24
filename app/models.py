@@ -632,6 +632,16 @@ class ProposalHistory(BaseModel):
     by: str = "system"
 
 
+class ProposalFeedback(BaseModel):
+    """事業計画書の「審議の記録」の1件（docs/proposal-ledger-design.md §2）。"""
+
+    meeting: str  # 五役会議① / 理事会① など
+    kind: str  # 意見 / 対応
+    no: int
+    person: str | None = None  # 質問者/回答者
+    text: str
+
+
 class Proposal(BaseModel):
     proposal_id: str
     lom_id: str = "inawashiro"
@@ -650,6 +660,17 @@ class Proposal(BaseModel):
     sed_approval: SedApproval = Field(default_factory=SedApproval)
     history: list[ProposalHistory] = Field(default_factory=list)
     status: str = "open"  # open | closed
+    # --- 作業文書（Google ドキュメント）から同期した内容（docs/proposal-ledger-design.md §4） ---
+    fiscal_year: int | None = None
+    doc_id: str | None = None
+    doc_modified_at: str | None = None  # 最後に読み取ったときの文書の更新日時（ドライブの値）
+    synced_at: datetime | None = None
+    basics: dict[str, str] = Field(default_factory=dict)  # 基本情報（委員会名・委員長など）
+    sections: dict[str, str] = Field(default_factory=dict)  # 事業要項の各項目
+    feedback: list[ProposalFeedback] = Field(default_factory=list)  # 審議の記録
+    event_date: str | None = None  # 実施日（YYYY-MM-DD）
+    venue: str | None = None
+    participants: str | None = None
 
 
 # --------------------------------------------------------------------------- #

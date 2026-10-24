@@ -37,6 +37,15 @@ type Proposal = {
   sed_approval: SedApproval;
   history: History[];
   status: string;
+  // 事業計画書（作業文書）から同期した内容（docs/proposal-ledger-design.md §4）
+  doc_id?: string | null;
+  synced_at?: string | null;
+  basics?: Record<string, string>;
+  sections?: Record<string, string>;
+  feedback?: { meeting: string; kind: string; no: number; person: string | null; text: string }[];
+  event_date?: string | null;
+  venue?: string | null;
+  participants?: string | null;
 };
 
 type CellState = "done" | "pending" | "unset" | "soon" | "overdue";
@@ -599,6 +608,8 @@ function Detail({
         </div>
       </section>
 
+      {p.doc_id && <PlanContent p={p} />}
+
       {/* 専務の判断 */}
       <section className="rounded-card bg-white p-5">
         <div className="mb-2 flex items-center justify-between gap-2">
@@ -1032,5 +1043,69 @@ function DrivePanel({ onClose, onImported }: { onClose: () => void; onImported: 
         </div>
       </details>
     </Panel>
+  );
+}
+
+// 事業計画書から同期した内容。台帳は文書から作るので、ここでは見るだけ（直すときは文書で）
+function PlanContent({ p }: { p: Proposal }) {
+  const sections = Object.entries(p.sections ?? {}).filter(([, v]) => v.trim());
+  const meetings = new Map<string, NonNullable<Proposal["feedback"]>>();
+  for (const f of p.feedback ?? []) meetings.set(f.meeting, [...(meetings.get(f.meeting) ?? []), f]);
+  const facts: [string, string | null | undefined][] = [
+    ["実施日", p.event_date],
+    ["場所", p.venue],
+    ["対象・人数", p.participants],
+    ["委員長", p.basics?.["委員長"]],
+    ["文書作成人", p.basics?.["文書作成人（役職/氏名）"]],
+  ];
+  return (
+    <section className="rounded-card bg-white p-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="font-extrabold">事業計画書の内容</h3>
+        {p.synced_at && <span className="text-xs text-ink-faint">文書から読み取り: {fmtDateTime(p.synced_at)}</span>}
+      </div>
+      <dl className="mt-2 grid grid-cols-[7rem_1fr] gap-y-1.5 text-sm">
+        {facts.map(([k, v]) => (
+          <div key={k} className="contents">
+            <dt className="text-ink-sub">{k}</dt>
+            <dd>{v?.trim() ? v : <span className="text-ink-faint">未記入</span>}</dd>
+          </div>
+        ))}
+      </dl>
+      <details className="mt-3 text-sm">
+        <summary className="cursor-pointer font-bold text-line-ink">
+          事業要項（記入済み {sections.length} / {Object.keys(p.sections ?? {}).length} 項目）
+        </summary>
+        <div className="mt-2 space-y-3">
+          {sections.map(([k, v]) => (
+            <div key={k}>
+              <div className="text-xs font-bold text-ink-sub">{k}</div>
+              <p className="whitespace-pre-wrap leading-relaxed">{v}</p>
+            </div>
+          ))}
+        </div>
+      </details>
+      {meetings.size > 0 && (
+        <details className="mt-3 text-sm" open>
+          <summary className="cursor-pointer font-bold text-line-ink">審議の記録</summary>
+          <div className="mt-2 space-y-3">
+            {[...meetings.entries()].map(([meeting, items]) => (
+              <div key={meeting}>
+                <div className="text-xs font-bold text-ink-sub">{meeting}</div>
+                <ul className="mt-1 space-y-1">
+                  {items.map((f) => (
+                    <li key={`${f.kind}${f.no}`} className="flex gap-2">
+                      <Badge tone={f.kind === "意見" ? "amber" : "green"}>{f.kind}{f.no}</Badge>
+                      <span className="whitespace-pre-wrap">{f.text}{f.person && <span className="text-ink-sub">（{f.person}）</span>}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+      <p className="mt-3 text-xs text-ink-faint">内容を直すときは、議案書（Google ドキュメント）を編集してください。1時間ごとに読み取ります。</p>
+    </section>
   );
 }
