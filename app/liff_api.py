@@ -37,6 +37,7 @@ from .models import (
     MemberStatus,
     PollStatus,
     ProposalStage,
+    SchedulePoll,
     TargetScope,
     TargetScopeKind,
 )
@@ -356,12 +357,14 @@ def liff_remind(event_id: str, request: Request):
 # --------------------------------------------------------------------------- #
 GOYAKU_ROLES = ["理事長", "副理事長", "専務理事", "監事"]
 RIJI_ROLES = ("委員長", "副委員長")
-#: 対象者と案内先のグループ（管理画面の「日程調整」と同じ）
+#: 対象者と案内先のグループ（管理画面の「日程調整」と同じ）。委員会は委員会を選ぶ
 POLL_TARGETS = {
     "goyaku": {"label": "五役", "audience": "五役の皆さま", "group": "2027年度　五役",
                "event_type": EventType.五役会},
     "riji": {"label": "理事", "audience": "理事の皆さま", "group": "2027 猪苗代青年会議所 理事会",
              "event_type": EventType.理事会},
+    "committee": {"label": "委員会", "audience": None, "group": None,
+                  "event_type": EventType.委員会},
     "all": {"label": "会員全員", "audience": "会員の皆さま", "group": "【JCI猪苗代】",
             "event_type": EventType.例会},
 }
@@ -373,14 +376,13 @@ def _norm(name: str) -> str:
 
 def _find_group(repo: Repository, name: str):
     """名前でグループを探す（完全一致 → 空白を無視して一致 → 含む。抜けたグループは除く）。"""
-    groups = [g for g in repo.list_line_groups() if g.group_name
-              and (not g.left_at or (g.joined_at and g.joined_at > g.left_at))]
+    groups = sp.active_groups(repo)
     return (next((g for g in groups if g.group_name == name), None)
             or next((g for g in groups if _norm(g.group_name) == _norm(name)), None)
             or next((g for g in groups if _norm(name) in _norm(g.group_name)), None))
 
 
-def _target_scope(repo: Repository, target: str) -> TargetScope:
+def _target_scope(repo: Repository, target: str, committee: str | None = None) -> TargetScope:
     if target == "goyaku":
         return TargetScope(kind=TargetScopeKind.officer, value=GOYAKU_ROLES)
     if target == "riji":
@@ -388,54 +390,80 @@ def _target_scope(repo: Repository, target: str) -> TargetScope:
                and (m.officer_role in GOYAKU_ROLES
                     or any(c.role in RIJI_ROLES for c in m.committees))]
         return TargetScope(kind=TargetScopeKind.custom, value=ids)
+    if target == "committee":
+        return TargetScope(kind=TargetScopeKind.committee, value=[committee or ""])
     return TargetScope(kind=TargetScopeKind.all)
+
+
+def _committee_destination(repo: Repository, committee: str) -> dict:
+    """委員会の送り先: 名前に委員会名を含むグループ、無ければ連携済みの対象者に個別。"""
+    group = sp.committee_group(repo, committee)
+    probe = SchedulePoll(poll_id="-", title="-", event_type=EventType.委員会,
+                         group_id=group.group_id if group else None,
+                         target_scope=_target_scope(repo, "committee", committee))
+    return sp.destination(repo, probe)
 
 
 def poll_form_view(repo: Repository) -> dict:
     targets = []
     for key, t in POLL_TARGETS.items():
-        group = _find_group(repo, t["group"])
+        group = _find_group(repo, t["group"]) if t["group"] else None
         targets.append({"value": key, "label": t["label"], "event_type": t["event_type"].value,
                         "group_name": group.group_name if group else None})
-    return {"targets": targets, "event_types": [t.value for t in EventType]}
+    committees = [{"name": name, **_committee_destination(repo, name)}
+                  for name in sp.committee_names(repo)]
+    return {"targets": targets, "committees": committees,
+            "event_types": [t.value for t in EventType]}
 
 
 def make_poll(repo: Repository, member: Member, body: dict, now: datetime) -> dict:
     """［作成する］: 日程調整を作る（まだ案内しない）。案内先は対象者から決める。"""
-    target = POLL_TARGETS.get(body.get("target") or "")
+    key = body.get("target") or ""
+    target = POLL_TARGETS.get(key)
     if target is None:
         raise LiffError(400, "対象者を選んでください。")
-    group = _find_group(repo, target["group"])
-    if group is None:
-        raise LiffError(409, f"案内先のグループ「{target['group']}」が見つかりません。"
-                             "管理画面から作成してください。")
+    committee = None
+    if key == "committee":
+        committee = body.get("committee") or ""
+        if committee not in sp.committee_names(repo):
+            raise LiffError(400, "委員会を選んでください。")
+        group = sp.committee_group(repo, committee)  # 無ければ個別に送る
+        audience = f"{committee}の皆さま"
+    else:
+        group = _find_group(repo, target["group"])
+        if group is None:
+            raise LiffError(409, f"案内先のグループ「{target['group']}」が見つかりません。"
+                                 "管理画面から作成してください。")
+        audience = target["audience"]
     try:
         payload = PollCreate(
             title=(body.get("title") or "").strip(), event_type=body.get("event_type"),
             location=(body.get("location") or "").strip() or None,
-            audience=target["audience"], candidates=body.get("candidates") or [],
-            target_scope=_target_scope(repo, body["target"]), group_id=group.group_id,
+            audience=audience, candidates=body.get("candidates") or [],
+            target_scope=_target_scope(repo, key, committee),
+            group_id=group.group_id if group else None,
             deadline=body.get("deadline") or None)
     except ValidationError:
         raise LiffError(400, "入力を確かめてください（会議の名前・候補日時は1〜10件）。") from None
     if not payload.title:
         raise LiffError(400, "会議の名前を入力してください。")
     poll = create_poll(repo, payload, _actor(member), now)
-    return {"poll_id": poll.poll_id, "title": poll.title, "group_name": group.group_name,
+    dest = sp.destination(repo, poll)
+    return {"poll_id": poll.poll_id, "title": poll.title, "group_name": dest["group_name"],
+            "mode": dest["mode"], "linked": dest["linked"],
             "candidates": [sp.candidate_label(c.start, c.end) for c in poll.candidates],
-            "targets": len(sp.target_members(repo, poll))}
+            "targets": dest["targets"]}
 
 
 def announce_poll(repo: Repository, member: Member, poll_id: str, now: datetime) -> dict:
-    """［グループに案内する］（画面で送り先を確認したあと）。"""
+    """［案内する］（画面で送り先を確認したあと）。"""
     poll = repo.get_poll(poll_id)
     if poll is None:
         raise LiffError(404, "日程調整が見つかりません。")
     if poll.announced_at:
         raise LiffError(409, "この日程調整はすでに案内しています。")
     sp.announce(repo, poll, _actor(member), now)
-    group = next((g for g in repo.list_line_groups() if g.group_id == poll.group_id), None)
-    return {"ok": True, "group_name": group.group_name if group else None}
+    return {"ok": True, **sp.destination(repo, poll)}
 
 
 @router.get("/liff/api/ops/poll-form")

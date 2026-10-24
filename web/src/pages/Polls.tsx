@@ -27,7 +27,8 @@ type Poll = {
   fiscal_year: number | null;
   location: string | null;
   audience: string | null;
-  group_id: string;
+  /** null なら連携済みの対象者に個別に送る（委員会あてで委員会のグループが無いとき） */
+  group_id: string | null;
   deadline: string | null;
   status: "open" | "closed" | "decided";
   decided_candidate_id: string | null;
@@ -51,7 +52,10 @@ type Summary = {
   counts: Record<string, Record<Answer, number>>;
   pending: string[];
   liff_url: string | null;
+  destination?: Destination;
 };
+type Destination = { mode: "group" | "individual"; group_name: string | null; targets: number; linked: number };
+type CommitteeDest = Destination & { committee: string; group_id: string | null };
 type ListItem = Poll & { pending: number };
 type Member = {
   member_id: string;
@@ -59,6 +63,9 @@ type Member = {
   status: string;
   officer_role: string | null;
   committees: { committee: string; role: string | null }[];
+  committee?: string | null;
+  supervised_committees?: string[];
+  line_user_id?: string | null;
 };
 type Group = { group_id: string; group_name: string | null; joined_at?: string | null; left_at?: string | null };
 type Brief = { answered: number; targets: number; leading: string | null };
@@ -77,10 +84,11 @@ const STATUS: Record<Poll["status"], { label: string; tone: "green" | "gray" | "
 const TYPES = ["五役会", "理事会", "委員会", "例会", "総会", "行事", "対外", "個別"];
 const GOYAKU_ROLES = ["理事長", "副理事長", "専務理事", "監事"];
 
-type Target = "goyaku" | "riji" | "all";
+type Target = "goyaku" | "riji" | "committee" | "all";
 const TARGETS: { value: Target; label: string; hint: string; audience: string; group: string }[] = [
   { value: "goyaku", label: "五役", hint: "理事長・副理事長・専務理事・監事", audience: "五役の皆さま", group: "2027年度　五役" },
   { value: "riji", label: "理事", hint: "五役＋委員長・副委員長", audience: "理事の皆さま", group: "2027 猪苗代青年会議所 理事会" },
+  { value: "committee", label: "委員会", hint: "その委員会に所属する会員（兼務を含む）＋担当の副理事長", audience: "", group: "" },
   { value: "all", label: "会員全員", hint: "在籍している会員すべて", audience: "会員の皆さま", group: "【JCI猪苗代】" },
 ];
 
@@ -91,12 +99,25 @@ function isGoyaku(m: Member): boolean {
 function isRiji(m: Member): boolean {
   return isGoyaku(m) || m.committees.some((c) => c.role === "委員長" || c.role === "副委員長");
 }
+function inCommittee(m: Member, committee: string): boolean {
+  return (
+    m.committee === committee ||
+    m.committees.some((c) => c.committee === committee) ||
+    (m.supervised_committees ?? []).includes(committee)
+  );
+}
 /** 対象者のプレビュー（サーバ側の対象の決め方と同じ） */
-function targetMembers(members: Member[], t: Target): Member[] {
+function targetMembers(members: Member[], t: Target, committee = ""): Member[] {
   const active = members.filter((m) => m.status === "active");
   if (t === "goyaku") return active.filter(isGoyaku);
   if (t === "riji") return active.filter(isRiji);
+  if (t === "committee") return committee ? active.filter((m) => inCommittee(m, committee)) : [];
   return active;
+}
+/** 送り先の言い方（確認画面と同じ） */
+function destLabel(d: Destination | undefined, groupName: string): string {
+  if (d?.mode === "individual") return `個別トーク（LINE 連携済みの ${d.linked} 人）`;
+  return `「${groupName}」`;
 }
 
 const norm = (s: string) => s.replace(/[\s　]/g, "");
@@ -225,6 +246,7 @@ type Draft = {
   location: string;
   audience: string;
   target: Target;
+  committee: string;
   group_id: string;
   deadline: string;
   candidates: Cand[];
@@ -237,6 +259,7 @@ const EMPTY: Draft = {
   location: "JC会館 or オンライン",
   audience: "五役の皆さま",
   target: "goyaku",
+  committee: "",
   group_id: "",
   deadline: "",
   candidates: [newCand(), newCand(), newCand()],
@@ -257,6 +280,10 @@ function CreateForm({
   const [d, setD] = useState<Draft>(EMPTY);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  const [committees, setCommittees] = useState<CommitteeDest[]>([]);
+  useEffect(() => {
+    api<CommitteeDest[]>("/polls/committees").then(setCommittees).catch(() => {});
+  }, []);
 
   // グループ一覧が届いたら、対象者に合わせた案内先を選んでおく
   useEffect(() => {
@@ -267,23 +294,35 @@ function CreateForm({
     }
   }, [groups]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const preview = useMemo(() => targetMembers(members, d.target), [members, d.target]);
+  const preview = useMemo(() => targetMembers(members, d.target, d.committee), [members, d.target, d.committee]);
+  const committeeDest = committees.find((c) => c.committee === d.committee);
+  const individual = d.target === "committee" && !d.group_id;
   const filled = d.candidates.filter((c) => c.date);
   const group = groups.find((g) => g.group_id === d.group_id);
 
   function setTarget(t: Target) {
     const preset = TARGETS.find((x) => x.value === t)!;
+    if (t === "committee") {
+      // 委員会を選ぶまで案内先は決めない（委員会のグループが無ければ個別に送る）
+      setD((x) => ({ ...x, target: t, committee: "", audience: "", group_id: "", event_type: "委員会" }));
+      return;
+    }
     const id = findGroup(groups, preset.group);
     setD((x) => ({
       ...x,
       target: t,
+      committee: "",
       audience: preset.audience,
-      group_id: id || x.group_id,
+      group_id: id || (x.target === "committee" ? "" : x.group_id),
       event_type:
-        x.event_type === "五役会" || x.event_type === "理事会"
-          ? t === "goyaku" ? "五役会" : t === "riji" ? "理事会" : x.event_type
+        x.event_type === "五役会" || x.event_type === "理事会" || x.event_type === "委員会"
+          ? t === "goyaku" ? "五役会" : t === "riji" ? "理事会" : "例会"
           : x.event_type,
     }));
+  }
+  function setCommittee(name: string) {
+    const dest = committees.find((c) => c.committee === name);
+    setD((x) => ({ ...x, committee: name, audience: name ? `${name}の皆さま` : "", group_id: dest?.group_id ?? "" }));
   }
   function setCand(i: number, patch: Partial<Cand>) {
     setD((x) => ({ ...x, candidates: x.candidates.map((c, j) => (j === i ? { ...c, ...patch } : c)) }));
@@ -298,7 +337,9 @@ function CreateForm({
     if (cands.some((c) => c.end && c.end <= c.start)) return setProblem("2. 終了時刻は開始時刻より後にしてください。");
     const keys = cands.map((c) => `${c.date}T${c.start}`);
     if (new Set(keys).size !== keys.length) return setProblem("2. 同じ候補日時が重なっています。");
-    if (!d.group_id) return setProblem("3. 案内先の LINE グループを選んでください。");
+    if (d.target === "committee" && !d.committee) return setProblem("3. 委員会を選んでください。");
+    if (d.target === "committee" && preview.length === 0) return setProblem("3. その委員会に会員が見つかりません。");
+    if (!d.group_id && d.target !== "committee") return setProblem("3. 案内先の LINE グループを選んでください。");
     if (d.target === "riji" && preview.length === 0) return setProblem("3. 理事にあたる会員が見つかりません。");
 
     const target_scope =
@@ -306,7 +347,9 @@ function CreateForm({
         ? { kind: "officer", value: GOYAKU_ROLES }
         : d.target === "riji"
           ? { kind: "custom", value: preview.map((m) => m.member_id) }
-          : { kind: "all", value: [] };
+          : d.target === "committee"
+            ? { kind: "committee", value: [d.committee] }
+            : { kind: "all", value: [] };
     setBusy(true);
     try {
       const res = await api<Summary>("/polls", {
@@ -322,11 +365,11 @@ function CreateForm({
             end: c.end ? `${c.date}T${c.end}` : null,
           })),
           target_scope,
-          group_id: d.group_id,
+          group_id: d.group_id || null,
           deadline: d.deadline || null,
         }),
       });
-      toast("作成しました。内容を確かめて「グループに案内する」を押してください");
+      toast("作成しました。内容と送り先を確かめて「案内する」を押してください");
       onCreated(res);
     } catch (e) {
       toast((e as Error).message, "error");
@@ -393,14 +436,31 @@ function CreateForm({
         <Segmented value={d.target} onChange={setTarget}
           options={TARGETS.map((t) => ({ value: t.value, label: t.label }))} />
         <div className="mt-2 text-xs text-ink-sub">{TARGETS.find((t) => t.value === d.target)!.hint}</div>
+        {d.target === "committee" && (
+          <Field label="委員会" className="mt-3 sm:w-1/2">
+            <select className="w-full" value={d.committee} onChange={(e) => setCommittee(e.target.value)}>
+              <option value="">選んでください</option>
+              {committees.map((c) => <option key={c.committee} value={c.committee}>{c.committee}</option>)}
+            </select>
+          </Field>
+        )}
         <div className="mt-3 rounded-2xl bg-gray-50 px-4 py-3 text-sm">
           <span className="font-bold">対象 <span className="num">{preview.length}</span> 人</span>
           <span className="ml-2 text-ink-sub">{preview.map((m) => m.name).join("・") || "（該当する会員がいません）"}</span>
         </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <Field label="案内を送る LINE グループ" hint="対象者に合わせて選んであります。違うときは選び直してください。">
+          <Field
+            label="案内を送る LINE グループ"
+            hint={
+              d.target === "committee"
+                ? d.committee && !committeeDest?.group_id
+                  ? `名前に「${d.committee}」を含むグループが無いため、LINE 連携済みの対象者 ${committeeDest?.linked ?? 0} 人に個別に送ります。`
+                  : "名前に委員会名を含むグループを選んであります。個別に送ることもできます。"
+                : "対象者に合わせて選んであります。違うときは選び直してください。"
+            }
+          >
             <select className="w-full" value={d.group_id} onChange={(e) => setD({ ...d, group_id: e.target.value })}>
-              <option value="">選んでください</option>
+              <option value="">{d.target === "committee" ? "グループなし（対象者に個別に送る）" : "選んでください"}</option>
               {groups.map((g) => <option key={g.group_id} value={g.group_id}>{groupLabel(g)}</option>)}
             </select>
           </Field>
@@ -424,7 +484,8 @@ function CreateForm({
       {problem && <ErrorNote>{problem}</ErrorNote>}
       <div className="flex flex-wrap items-center justify-end gap-3 border-t border-gray-100 pt-4">
         <span className="text-xs text-ink-sub">
-          {filled.length} 件の候補・対象 {preview.length} 人・案内先 {group ? `「${groupLabel(group)}」` : "未選択"}
+          {filled.length} 件の候補・対象 {preview.length} 人・案内先{" "}
+          {group ? `「${groupLabel(group)}」` : individual ? `個別トーク（連携済み ${preview.filter((m) => m.line_user_id).length} 人）` : "未選択"}
         </span>
         <Button onClick={onCancel}>やめる</Button>
         <Button variant="primary" disabled={busy} onClick={create}>作成する（まだ送りません）</Button>
@@ -453,7 +514,10 @@ function PollDetail({
   const answered = s.rows.length - s.pending.length;
   const allRows = [...s.rows, ...s.others];
   const canSend = !!s.liff_url;
-  const where = <b className="text-ink">「{groupName}」</b>;
+  // 委員会あてで委員会のグループが無いときは、連携済みの対象者に個別に送る
+  const individual = !p.group_id;
+  const dest = destLabel(s.destination, groupName);
+  const where = <b className="text-ink">{dest}</b>;
 
   async function run(path: string, body: unknown, done: (res: unknown) => string) {
     setBusy(true);
@@ -473,7 +537,7 @@ function PollDetail({
 
   async function announce() {
     const ok = await confirm({
-      title: p.announced_at ? "もう一度案内を送りますか？" : "グループに案内を送りますか？",
+      title: p.announced_at ? "もう一度案内を送りますか？" : individual ? "個別に案内を送りますか？" : "グループに案内を送りますか？",
       body: (
         <>
           送り先: {where}
@@ -481,12 +545,14 @@ function PollDetail({
           対象 {s.rows.length} 人（{p.audience ?? "宛名なし"}）・候補 {s.candidates.length} 件
           {p.deadline && <>・締切 {fmtDateTime(p.deadline)}</>}
           <br />
-          LINE への送信は取り消せません。送り先のグループ名をよく確かめてください。
+          {individual
+            ? "委員会のグループが無いため、対象者それぞれの個別トークに送ります（LINE 未連携の方には届きません）。LINE への送信は取り消せません。"
+            : "LINE への送信は取り消せません。送り先のグループ名をよく確かめてください。"}
         </>
       ),
-      confirmLabel: `「${groupName}」に送る`,
+      confirmLabel: `${dest}に送る`,
     });
-    if (ok) run("announce", undefined, () => `「${groupName}」に案内を送りました`);
+    if (ok) run("announce", undefined, () => `${dest}に案内を送りました`);
   }
   async function remind() {
     const ok = await confirm({
@@ -495,12 +561,14 @@ function PollDetail({
         <>
           送り先: {where}
           <br />
-          グループの中で、次の方に名前を挙げて回答をお願いします: {s.pending.join("・")}
+          {individual
+            ? <>次の方それぞれに、個別トークで回答をお願いします: {s.pending.join("・")}</>
+            : <>グループの中で、次の方に名前を挙げて回答をお願いします: {s.pending.join("・")}</>}
           <br />
           LINE への送信は取り消せません。
         </>
       ),
-      confirmLabel: `「${groupName}」に送る`,
+      confirmLabel: `${dest}に送る`,
     });
     if (ok)
       run("remind", undefined, (r) => {
@@ -533,7 +601,7 @@ function PollDetail({
           )}
         </>
       ),
-      confirmLabel: notify ? `決定して「${groupName}」に送る` : "決定する",
+      confirmLabel: notify ? `決定して${dest}に送る` : "決定する",
     });
     if (ok) run("decide", { candidate_id: c.candidate_id, notify }, () => `${c.label} に決定しました`);
   }
@@ -552,7 +620,7 @@ function PollDetail({
             </div>
             <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
               <dt className="text-ink-sub">案内先</dt>
-              <dd className="font-bold">{groupName}<span className="ml-2 font-normal text-ink-sub">{p.audience}</span></dd>
+              <dd className="font-bold">{individual ? dest : groupName}<span className="ml-2 font-normal text-ink-sub">{p.audience}</span></dd>
               <dt className="text-ink-sub">種類・場所</dt>
               <dd>{p.event_type}{p.fiscal_year ? `（${p.fiscal_year}年度）` : ""}・{p.location ?? "未定"}</dd>
               <dt className="text-ink-sub">締切</dt>
@@ -570,7 +638,7 @@ function PollDetail({
         {p.status === "open" && (
           <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-gray-100 pt-4">
             {!p.announced_at ? (
-              <Button variant="primary" disabled={busy || !canSend} onClick={announce}>グループに案内する</Button>
+              <Button variant="primary" disabled={busy || !canSend} onClick={announce}>{individual ? "個別に案内する" : "グループに案内する"}</Button>
             ) : (
               <>
                 <Button variant="primary" disabled={busy || !canSend || s.pending.length === 0} onClick={remind}>
@@ -686,7 +754,7 @@ function PollDetail({
           </p>
           <label className="mb-3 flex items-center gap-2">
             <input type="checkbox" checked={notify} onChange={(e) => setNotify(e.target.checked)} />
-            <span>決定のお知らせを「{groupName}」に送る</span>
+            <span>決定のお知らせを{dest}に送る</span>
           </label>
           <ul className="divide-y divide-gray-100">
             {s.candidates.map((c) => {
@@ -765,7 +833,7 @@ export default function Polls() {
 
   const groupName = useMemo(() => {
     const map = new Map(groups.map((g) => [g.group_id, groupLabel(g)]));
-    return (id: string) => map.get(id) ?? "（参加していないグループ）";
+    return (id: string | null) => (id ? map.get(id) ?? "（参加していないグループ）" : "個別トーク");
   }, [groups]);
 
   const openPoll = (id: string) => setParams({ id });

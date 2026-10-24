@@ -15,7 +15,14 @@ from pydantic import BaseModel, Field
 from . import schedule_poll as sp
 from .audit import write_audit
 from .deps import get_repo
-from .models import EventType, PollCandidate, PollStatus, SchedulePoll, TargetScope
+from .models import (
+    EventType,
+    PollCandidate,
+    PollStatus,
+    SchedulePoll,
+    TargetScope,
+    TargetScopeKind,
+)
 from .repository import Repository
 
 router = APIRouter(tags=["polls"])
@@ -55,7 +62,8 @@ class PollCreate(BaseModel):
     audience: str | None = None
     candidates: list[CandidateIn] = Field(min_length=1, max_length=10)
     target_scope: TargetScope = TargetScope()
-    group_id: str = Field(min_length=1)
+    #: 案内先のグループ。委員会あてで空なら、連携済みの対象者に個別に送る
+    group_id: str | None = None
     deadline: datetime | None = None
 
 
@@ -66,6 +74,12 @@ class DecideIn(BaseModel):
 
 def create(repo: Repository, payload: PollCreate, actor: str, now: datetime) -> SchedulePoll:
     """日程調整を作る（管理画面と LIFF「日程調整を作る」で共通）。案内はまだ送らない。"""
+    scope = payload.target_scope
+    if scope.kind == TargetScopeKind.committee:
+        if not scope.value or not set(scope.value) <= set(sp.committee_names(repo)):
+            raise sp.PollError(400, "委員会を選んでください。")
+    elif not payload.group_id:
+        raise sp.PollError(400, "案内先の LINE グループを選んでください。")
     candidates = sorted(payload.candidates, key=lambda c: c.start)
     poll = SchedulePoll(
         poll_id=sp.new_poll_id(),
@@ -77,7 +91,7 @@ def create(repo: Repository, payload: PollCreate, actor: str, now: datetime) -> 
         candidates=[PollCandidate(candidate_id=sp.new_candidate_id(i), start=c.start, end=c.end)
                     for i, c in enumerate(candidates)],
         target_scope=payload.target_scope,
-        group_id=payload.group_id,
+        group_id=payload.group_id or None,
         deadline=payload.deadline,
         created_at=now,
         created_by=actor,
@@ -91,8 +105,27 @@ def create(repo: Repository, payload: PollCreate, actor: str, now: datetime) -> 
 def create_poll(payload: PollCreate,
                 x_goog_authenticated_user_email: str | None = Header(default=None)):
     repo = get_repo()
-    poll = create(repo, payload, _actor(x_goog_authenticated_user_email), datetime.now())
+    try:
+        poll = create(repo, payload, _actor(x_goog_authenticated_user_email), datetime.now())
+    except sp.PollError as exc:
+        raise _error(exc) from exc
     return sp.summary(repo, poll)
+
+
+@router.get("/polls/committees")  # /polls/{poll_id} より前に置く
+def poll_committees():
+    """委員会あての日程調整: 委員会ごとの対象者数と送り先（グループ or 個別）。"""
+    repo = get_repo()
+    rows = []
+    for name in sp.committee_names(repo):
+        probe = SchedulePoll(poll_id="-", title="-", event_type=EventType.委員会,
+                             target_scope=TargetScope(kind=TargetScopeKind.committee,
+                                                      value=[name]))
+        group = sp.committee_group(repo, name)
+        rows.append({"committee": name, "group_id": group.group_id if group else None,
+                     **sp.destination(repo, probe.model_copy(
+                         update={"group_id": group.group_id if group else None}))})
+    return rows
 
 
 @router.get("/polls")

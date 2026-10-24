@@ -762,7 +762,9 @@ class SchedulePoll(BaseModel):
     candidates: list[PollCandidate] = Field(default_factory=list)
     target_scope: TargetScope = Field(default_factory=TargetScope)  # 回答してほしい人
     audience: str | None = None  # 案内文の宛名（「五役の皆さま」等）
-    group_id: str  # 案内・催促・決定を送る LINE グループ
+    #: 案内・催促・決定を送る LINE グループ。None なら連携済みの対象者に個別に送る
+    #: （委員会あてで委員会のグループが無いとき。docs/schedule-poll-design.md §9）
+    group_id: str | None = None
     deadline: datetime | None = None
     status: PollStatus = PollStatus.open
     decided_candidate_id: str | None = None

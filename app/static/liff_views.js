@@ -166,8 +166,12 @@
       document.title = "日程調整を作る";
       const form = await api("GET", "/liff/api/ops/poll-form");
       bar.hidden = true;
-      const d = { title: "", target: form.targets[0].value, event_type: form.targets[0].event_type,
+      const d = { title: "", target: form.targets[0].value, event_type: form.targets[0].event_type, committee: "",
                   location: "", deadline: "", candidates: [{ date: "", start: "19:00", end: "" }] };
+      // 送り先の説明（確認画面と同じ言い方）
+      const destText = (x) => x.mode === "individual"
+        ? `LINE 連携済みの ${x.linked} 人に個別に送ります（対象 ${x.targets} 人。委員会のグループが見つからないため）`
+        : `LINE グループ「${x.group_name}」`;
       let created = null;
       const input = (attrs, key, obj = d) => el("input", { ...attrs, value: obj[key], oninput: (e) => { obj[key] = e.target.value; } });
       const draw = (flash) => {
@@ -176,24 +180,28 @@
         if (created) {
           kids.push(el("div", { class: "card" },
             el("h2", {}, created.title),
-            el("div", { class: "hint" }, `対象 ${created.targets} 人　案内先: ${created.group_name}`),
+            el("div", { class: "hint" }, `対象 ${created.targets} 人　案内先: ${destText(created)}`),
             ...created.candidates.map((c) => el("div", { class: "meta" }, `・${c}`)),
-            created.announced ? el("div", { class: "hint" }, "グループに案内しました。") : el("div", { class: "actions" }, el("button", {
+            created.announced ? el("div", { class: "hint" }, "案内しました。") : el("div", { class: "actions" }, el("button", {
               type: "button", class: "primary",
               onclick: async (e) => {
-                if (!confirm(`LINE グループ「${created.group_name}」に日程調整の案内を送ります。送信は取り消せません。よろしいですか？`)) return;
+                if (!confirm(`${destText(created)}に日程調整の案内を送ります。送信は取り消せません。よろしいですか？`)) return;
                 e.target.disabled = true;
                 try {
                   await api("POST", `/liff/api/ops/polls/${encodeURIComponent(created.poll_id)}/announce`);
                   created.announced = true;
-                  draw({ ok: true, text: `「${created.group_name}」に案内しました。` });
+                  draw({ ok: true, text: created.mode === "individual" ? `${created.linked} 人に個別に案内しました。` : `「${created.group_name}」に案内しました。` });
                 } catch (err) { draw({ ok: false, text: err.message }); e.target.disabled = false; }
               },
-            }, `「${created.group_name}」に案内する`))));
+            }, created.mode === "individual" ? `${created.linked} 人に個別に案内する` : `「${created.group_name}」に案内する`))));
           app.replaceChildren(...kids);
           return;
         }
         const target = form.targets.find((t) => t.value === d.target);
+        const committee = form.committees.find((c) => c.name === d.committee);
+        const dest = d.target !== "committee"
+          ? (target.group_name ? `案内先: ${target.group_name}` : "案内先のグループが見つかりません（管理画面から作成してください）")
+          : committee ? `案内先: ${destText(committee)}` : "委員会を選んでください。";
         kids.push(el("div", { class: "card form" },
           el("label", {}, "1. 会議の名前", input({ type: "text", placeholder: "第3回五役会" }, "title")),
           el("div", { class: "group" }, "対象者",
@@ -201,7 +209,10 @@
               type: "button", class: "ok", "aria-pressed": String(d.target === t.value),
               onclick: () => { d.target = t.value; d.event_type = t.event_type; draw(); },
             }, t.label)))),
-          el("div", { class: "hint" }, target.group_name ? `案内先: ${target.group_name}` : "案内先のグループが見つかりません（管理画面から作成してください）"),
+          d.target === "committee" ? el("label", {}, "委員会", el("select", { onchange: (e) => { d.committee = e.target.value; draw(); } },
+            el("option", { value: "", selected: !d.committee }, "選んでください"),
+            ...form.committees.map((c) => el("option", { value: c.name, selected: c.name === d.committee }, c.name)))) : null,
+          el("div", { class: "hint" }, dest),
           el("label", {}, "種別", el("select", { onchange: (e) => { d.event_type = e.target.value; } },
             ...form.event_types.map((t) => el("option", { value: t, selected: t === d.event_type }, t)))),
           el("label", {}, "場所（任意）", input({ type: "text", placeholder: "JC会館 or オンライン" }, "location"))));
@@ -221,14 +232,15 @@
             const cands = d.candidates.filter((c) => c.date);
             if (!d.title.trim()) return draw({ ok: false, text: "会議の名前を入力してください。" });
             if (!cands.length || cands.some((c) => !c.start)) return draw({ ok: false, text: "候補日時（日付と開始時刻）を入力してください。" });
+            if (d.target === "committee" && !d.committee) return draw({ ok: false, text: "委員会を選んでください。" });
             e.target.disabled = true;
             try {
               created = await api("POST", "/liff/api/ops/polls", {
-                title: d.title, target: d.target, event_type: d.event_type, location: d.location,
+                title: d.title, target: d.target, committee: d.committee, event_type: d.event_type, location: d.location,
                 deadline: d.deadline || null,
                 candidates: cands.map((c) => ({ start: `${c.date}T${c.start}`, end: c.end ? `${c.date}T${c.end}` : null })),
               });
-              draw({ ok: true, text: "作成しました。内容を確かめて、グループに案内してください（まだ送っていません）。" });
+              draw({ ok: true, text: "作成しました。内容と送り先を確かめて、案内してください（まだ送っていません）。" });
             } catch (err) { draw({ ok: false, text: err.message }); }
           },
         }, "作成する（まだ案内しません）")));
