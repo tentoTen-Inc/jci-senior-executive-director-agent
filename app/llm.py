@@ -13,7 +13,7 @@ import json
 import logging
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import config, jpdate
 from .models import InferenceUsage, LlmReview, NoticeDigest, SurveyDigest, SurveyTheme
@@ -121,6 +121,45 @@ _CALENDAR_PROMPT = """あなたは青年会議所(JC)の予定管理アシスタ
 # 出力(JSONのみ)
 """
 
+_DOC_EDIT_PROMPT = """あなたは青年会議所(JC)の専務理事を補佐するアシスタントです。
+理事メンバーの依頼にもとづいて、委員会の資料(Google ドキュメント)の表の項目に書く文章の案を作り、
+JSONで出力してください。
+
+厳守事項:
+- 書き換える項目名は「項目の一覧」から一字一句そのまま選ぶ。
+  一覧に無い項目・[読み取り専用] の項目は返さない。
+- 依頼が一部の項目(例: 「スローガンを変えて」)だけなら、その項目だけを返す。
+  「サマリーを更新して」「〇〇な委員会にしたい」のように全体の依頼なら、関係する項目をまとめて返す。
+- 今の内容がある項目は、それを生かして書き直す。依頼と関係ない内容を消さない。
+- JC の事業計画書の文体(「〜します」「〜を目指します」等の敬体、簡潔)で書く。
+  スローガンは1行の短い言葉にする。年間スケジュールのセルは「例会」「事業名」など短い語にする。
+- 参考資料(昨年度の資料・理事長所信など)の方針や言葉づかいは参考にしてよいが、
+  根拠のない数値・日付・固有名詞・実績を作らない。
+- 依頼の内容が読み取れず案を作れないときは edits を空にし、question に聞き返す一文(敬体)を入れる。
+
+出力JSON:
+- edits: [{{field: 項目名, text: 新しい内容(改行可)}}]
+- summary: 何をどう変えたかの一文(敬体)
+- question: 聞き返す文(不要なら null)
+
+# 委員会
+{committee}
+
+# 資料
+{title}
+
+# 項目の一覧(今の内容)
+{fields}
+
+# 参考資料(検索結果の抜粋)
+{knowledge}
+
+# 依頼
+{request}
+
+# 出力(JSONのみ)
+"""
+
 _SURVEY_PROMPT = """あなたは青年会議所(JC)の専務理事を補佐するアシスタントです。
 例会アンケートの自由記述を分析し、JSONで出力してください。
 
@@ -199,6 +238,8 @@ TASK_MODELS: dict[str, str] = {
     "proposal_review": PRO,  # 議案の内容レビュー（論点・矛盾の指摘。品質重視・非同期）
     "external_notice_digest": PRO,  # 対外連絡の要約と告知文（誤要約を避けたい・非同期）
     "survey_digest": PRO,  # アンケート自由記述の分析（傾向の読み取り・非同期・件数少）
+    # 委員会資料の案（LINE で返事を待つので Flash。文章の質も要るため少しだけ考えさせる・件数少）
+    "doc_edit": FLASH,
 }
 
 
@@ -209,6 +250,7 @@ TASK_THINKING_BUDGET: dict[str, int | None] = {
     "member_qa": 0,  # 材料に書いてあることを答える。考えなくても質は同等だった
     "attendance_intent": 0,  # 出欠の読み取りは単純な抽出
     "calendar_intent": 512,  # 「来週火曜」等の日付の計算があるので少しだけ考えさせる
+    "doc_edit": 1024,  # 依頼と今の内容・参考資料を突き合わせて文章を組み立てる
 }
 
 
@@ -648,3 +690,51 @@ def digest_notice(subject: str, sender: str, body: str) -> DigestOutcome | None:
             output_tokens=gen.output_tokens,
         ),
     )
+
+
+# --------------------------------------------------------------------------- #
+# 委員会資料の案（docs/committee-docs-edit-design.md §6）
+# --------------------------------------------------------------------------- #
+class DocEditDraft(BaseModel):
+    edits: dict[str, str] = Field(default_factory=dict)  # 項目名 → 新しい内容
+    summary: str | None = None
+    question: str | None = None
+
+
+class DocEditOutcome(BaseModel):
+    draft: DocEditDraft
+    usage: InferenceUsage
+
+
+def generate_doc_edit(prompt: str, *, model: str, project: str, location: str) -> Generation:
+    """委員会資料の案の生成（テストでモックする境界）。"""
+    return _call_gemini(
+        prompt, model=model, project=project, location=location,
+        thinking_budget=thinking_budget_for("doc_edit"),
+    )
+
+
+def draft_doc_edit(request: str, committee: str, title: str, fields: str,
+                   knowledge: str) -> DocEditOutcome | None:
+    """依頼から、資料の表の項目に書く案を作る。失敗時は None。"""
+    model, project, location = _target("doc_edit")
+    prompt = _DOC_EDIT_PROMPT.format(
+        request=request, committee=committee, title=title, fields=fields,
+        knowledge=knowledge or "(なし)",
+    )
+    try:
+        gen = generate_doc_edit(prompt, model=model, project=project, location=location)
+        data = json.loads(gen.text)
+        edits: dict[str, str] = {}
+        for item in data.get("edits") or []:
+            name, text = _opt_str(item.get("field")), _opt_str(item.get("text"))
+            if name and text:
+                edits[name] = text
+        draft = DocEditDraft(edits=edits, summary=_opt_str(data.get("summary")),
+                             question=_opt_str(data.get("question")))
+    except Exception:  # noqa: BLE001 - LLM未設定/失敗でも本処理は止めない
+        logger.exception("委員会資料の案の作成に失敗しました")
+        return None
+    return DocEditOutcome(draft=draft, usage=InferenceUsage(
+        model=model, input_tokens=gen.input_tokens, output_tokens=gen.output_tokens,
+    ))
