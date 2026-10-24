@@ -46,7 +46,7 @@ const FILTERS: { value: Filter; label: string }[] = [
   { value: "", label: "すべて" },
   { value: "down", label: "👎 違う" },
   { value: "ungrounded", label: "根拠なし" },
-  { value: "escalated", label: "事務局へ取次" },
+  { value: "escalated", label: "人の対応が必要" },
   { value: "unrated", label: "未評価" },
   { value: "up", label: "👍 役に立った" },
 ];
@@ -156,7 +156,7 @@ export default function AiAnswers() {
             <Stat label="👎 違う" value={summary.down} unit="件" highlight={summary.down > 0} sub={summary.down > 0 ? "内容を確認してください" : undefined} />
             <Stat label="未評価" value={summary.unrated} unit="件" />
             <Stat label="根拠なし" value={summary.ungrounded} unit="件" sub="資料が見つからなかった回答" />
-            <Stat label="事務局へ取次" value={summary.escalated} unit="件" />
+            <Stat label="人の対応が必要" value={summary.escalated} unit="件" sub="［意見箱に送る］を付けた回答" />
           </div>
         </>
       )}
@@ -200,7 +200,7 @@ function AnswerCard({ a }: { a: Answer }) {
         <span className="num text-sm font-bold">{fmtDateTime(a.answered_at)}</span>
         <RatingBadge rating={a.rating} />
         {!a.grounded && <Badge tone="amber">根拠なし</Badge>}
-        {a.needs_human && <Badge tone="blue">事務局へ取次</Badge>}
+        {a.needs_human && <Badge tone="blue">人の対応が必要</Badge>}
       </div>
 
       {/* 会員の質問（左）と AI の回答（右）を LINE の吹き出しで */}

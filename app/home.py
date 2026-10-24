@@ -7,7 +7,14 @@ from pydantic import BaseModel
 
 from .attendance import aggregate
 from .calendar_sync import calendar_title
-from .models import DeliveryResult, EventStatus, LinkRequestStatus, MemberStatus, PollStatus
+from .models import (
+    DeliveryResult,
+    EventStatus,
+    FeedbackStatus,
+    LinkRequestStatus,
+    MemberStatus,
+    PollStatus,
+)
 from .notice_actions import open_action_count
 from .repository import Repository
 
@@ -31,6 +38,7 @@ class ActionRequired(BaseModel):
     unanswered_total: int
     open_notice_actions: int = 0  # 未対応者が残る対外連絡アクション（F5-5）
     link_requests: int = 0  # LINE 連携の承認待ち（docs/line-link-design.md）
+    new_feedback: int = 0  # 意見箱の新規（docs/feedback-box-design.md）
 
 
 class AgendaItem(BaseModel):
@@ -123,6 +131,7 @@ def build_home(repo: Repository, *, now: datetime) -> HomeData:
             open_notice_actions=open_action_count(repo),
             link_requests=sum(1 for r in repo.list_link_requests()
                               if r.status == LinkRequestStatus.pending),
+            new_feedback=sum(1 for f in repo.list_feedback() if f.status == FeedbackStatus.new),
         ),
         upcoming_events=briefs[:5],
         this_week=this_week,

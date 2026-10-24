@@ -2,7 +2,7 @@
 
 | 種類 | 対象 | ボタン |
 |---|---|---|
-| member（2×2） | 会員 | 予定と出欠／日程調整／AIに聞く／事務局に連絡 |
+| member（2×2） | 会員 | 予定と出欠／日程調整／AIに聞く／意見箱 |
 | board（3×2） | 委員長・直前理事長 | 上の4つ＋資料を作る・直す＋委員会の議案 |
 | officer（タブ＋3×2） | 五役・監事・事務局 | 「みんな」タブ: board と同じ6つ |
 | officer_ops（タブ＋3＋2） | 同上 | 「運営」タブ: 予定を登録・変更／出欠の状況／日程調整を作る／ |
@@ -22,9 +22,9 @@ from .member_menu import (
     MENU_ASK,
     MENU_ATT_STATUS,
     MENU_CALENDAR,
-    MENU_CONTACT,
     MENU_DOCS,
     MENU_EVENTS,
+    MENU_FEEDBACK,
     MENU_POLL_NEW,
     MENU_POLLS,
     MENU_PROPOSALS,
@@ -41,8 +41,8 @@ KINDS = (MEMBER, BOARD, OFFICER, OFFICER_OPS)
 #: 五役のタブ（rich menu alias の ID と表示名）
 TABS = {OFFICER: ("jci-officer-main", "みんな"), OFFICER_OPS: ("jci-officer-ops", "運営")}
 
-_COMMON = [MENU_EVENTS, MENU_POLLS, MENU_ASK, MENU_CONTACT]
-_BOARD = [MENU_EVENTS, MENU_POLLS, MENU_ASK, MENU_CONTACT, MENU_DOCS, MENU_PROPOSALS]
+_COMMON = [MENU_EVENTS, MENU_POLLS, MENU_ASK, MENU_FEEDBACK]
+_BOARD = [MENU_EVENTS, MENU_POLLS, MENU_ASK, MENU_FEEDBACK, MENU_DOCS, MENU_PROPOSALS]
 #: 種類ごとのボタンの並び（行ごと）
 LAYOUTS: dict[str, list[list[str]]] = {
     MEMBER: [_COMMON[:2], _COMMON[2:]],
@@ -56,6 +56,7 @@ TEXTS = {"__admin__": "管理画面を開く"}
 LIFF_VIEWS: dict[str, str] = {
     MENU_EVENTS: "events", MENU_POLLS: "polls", MENU_PROPOSALS: "proposals",
     MENU_ATT_STATUS: "attendance", MENU_POLL_NEW: "poll-new", MENU_APPROVALS: "approvals",
+    MENU_FEEDBACK: "feedback",
 }
 #: 背景（作業を始めるボタンは緑、運営は落ち着いた紫）
 _ACCENT = {MENU_DOCS: "#1e7a4f", MENU_PROPOSALS: "#1e7a4f"}
