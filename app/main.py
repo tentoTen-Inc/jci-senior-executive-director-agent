@@ -52,6 +52,7 @@ from . import (
     line_link,
     line_push,
     line_worker,
+    proposal_sync,
 )
 from . import lake_api as lake_api_module
 from .admin_api import router as admin_router
@@ -470,9 +471,11 @@ def tasks_tick():
     # ドライブの資料を取り込んでから索引する（同じ tick で新しい資料も検索できるように）
     lake_result = {"redact": redact_unsent(), "drive": drive_knowledge.sync(),
                    "knowledge": index_knowledge()}
+    # 事業計画書（作業文書）を議案台帳に写す（docs/proposal-ledger-design.md §5）
+    proposals_result = proposal_sync.sync(repo, now)
     return {
         "planned": len(jobs), "results": results, "gmail": gmail_result, "gcal": gcal_result,
-        "lake": lake_result, "posts": posts_result,
+        "lake": lake_result, "posts": posts_result, "proposals": proposals_result,
     }
 
 
