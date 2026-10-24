@@ -268,7 +268,10 @@ def main() -> None:
     if args.client_secret_file:
         client_id, client_secret, registered = load_client_json(args.client_secret_file)
         expected = redirect_uri(args.port)
-        if registered and expected not in registered:
+        # デスクトップ アプリの「http://localhost」（ポートなし）は、どのポートへの戻りも受け付ける
+        loopback = any(uri.rstrip("/") in ("http://localhost", "http://127.0.0.1")
+                       for uri in registered)
+        if registered and expected not in registered and not loopback:
             raise SystemExit(
                 f"このクライアントに登録されたリダイレクトURIは {registered} です。"
                 f"--port を合わせるか、コンソールに {expected} を追加してください。"
