@@ -10,9 +10,9 @@ from app.member_menu import (
     MENU_ASK,
     MENU_ATT_STATUS,
     MENU_CALENDAR,
-    MENU_CONTACT,
     MENU_DOCS,
     MENU_EVENTS,
+    MENU_FEEDBACK,
     MENU_POLL_NEW,
     MENU_POLLS,
     MENU_PROPOSALS,
@@ -33,7 +33,7 @@ from app.rich_menu import (
     rich_menu_definition,
 )
 
-COMMON = [MENU_EVENTS, MENU_POLLS, MENU_ASK, MENU_CONTACT]
+COMMON = [MENU_EVENTS, MENU_POLLS, MENU_ASK, MENU_FEEDBACK]
 
 
 def _labels(kind):

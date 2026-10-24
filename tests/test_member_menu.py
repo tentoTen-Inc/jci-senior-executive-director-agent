@@ -58,21 +58,13 @@ def test_answer_prompt_returns_attendance_request():
     assert labels == ["出席", "Web出席", "欠席"]
 
 
-def test_contact_text_only_guides():
-    """短い文の「事務局に連絡」では起票せず、ボタンを返すだけ（設計 §2）。"""
+def test_contact_text_and_old_button_only_guide_to_feedback_box():
+    """「事務局に連絡」はやめた。短い文・旧ボタンには意見箱の案内だけを返す（書き込まない）。"""
     repo, member = setup()
-    msgs = handle_member_text(repo, member, "事務局に連絡", now=NOW)
-    assert msgs[0].quick_reply.items[0].action.data == "menu|事務局に連絡"
-    assert repo.list_escalations() == []
-
-
-def test_contact_button_records_escalation():
-    repo, member = setup()
-    msgs = handle_member_text(repo, member, "menu|事務局に連絡", now=NOW)
-    assert "受け付け" in msgs[0].text
-    escalations = repo.list_escalations()
-    assert len(escalations) == 1
-    assert escalations[0].member_id == "m1"
+    for text in ("事務局に連絡", "menu|事務局に連絡"):
+        msgs = handle_member_text(repo, member, text, now=NOW)
+        assert "意見箱" in msgs[0].text and "専務に直接 LINE" in msgs[0].text
+    assert repo.list_escalations() == [] and repo.list_feedback() == []
 
 
 def test_menu_postback_value():
@@ -91,7 +83,7 @@ def test_menu_keyword():
     repo, member = setup()
     msgs = handle_member_text(repo, member, "メニュー", now=NOW)
     labels = [i.action.label for i in msgs[0].quick_reply.items]
-    assert labels == ["予定と出欠", "日程調整", "AIに聞く", "事務局に連絡"]
+    assert labels == ["予定と出欠", "日程調整", "AIに聞く", "意見箱"]
 
 
 # --------------------------------------------------------------------------- #

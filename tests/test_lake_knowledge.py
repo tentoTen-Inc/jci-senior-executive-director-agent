@@ -198,7 +198,7 @@ def test_long_questions_go_to_ai(routed, text):
     ("次回の予定", "予定されている"),
     ("出欠確認", "対象の予定はありません"),
     ("欠席", "回答が必要な出欠はありません"),
-    ("事務局に連絡", "［事務局に連絡］を押すと受け付けます"),  # 文では起票しない（設計 §2）
+    ("事務局に連絡", "［意見箱］から送ってください"),  # 文では保存しない（意見箱の案内だけ）
 ])
 def test_short_commands_keep_fixed_replies(routed, text, expected):
     msgs = handle_member_text(InMemoryRepository(), _member(), text, now=NOW)

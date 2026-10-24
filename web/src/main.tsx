@@ -16,6 +16,7 @@ import LineGroups from "./pages/LineGroups";
 import AiAnswers from "./pages/AiAnswers";
 import Agent from "./pages/Agent";
 import SettingsPage from "./pages/Settings";
+import FeedbackPage from "./pages/Feedback";
 
 const router = createBrowserRouter(
   [
@@ -35,6 +36,7 @@ const router = createBrowserRouter(
         { path: "ai-answers", element: <AiAnswers /> },
         { path: "agent", element: <Agent /> },
         { path: "settings", element: <SettingsPage /> },
+        { path: "feedback", element: <FeedbackPage /> },
       ],
     },
   ],

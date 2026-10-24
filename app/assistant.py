@@ -1,8 +1,9 @@
 """会員の自由文問い合わせへの応答（docs/nl-assistant-design.md, F8）。
 
 - 自LOM情報（`rag.build_context`）だけを根拠に Gemini が答える（F8-1/F8-2）。
-- 根拠不足・人の対応が必要なら［事務局に取り次ぐ］ボタンを付け、押したときだけ Escalation を
-  起票する（F8-3。自由文では書き込まない: docs/doc-session-design.md §1）。
+- 根拠不足・人の対応が必要なら［意見箱に送る］ボタンを付け、押したときだけその質問を意見箱に
+  種類「AIが答えられなかった」で保存する（docs/feedback-box-design.md §3。自由文では書き込まない:
+  docs/doc-session-design.md §1）。
 - 他会員の個人情報はコンテキストに載せない（F8-4 の一次防御は rag 側）。
 - 直近のやり取りを保持して文脈を繋ぐ（F8-5）。
 """
@@ -10,7 +11,6 @@ from __future__ import annotations
 
 import logging
 import time
-import uuid
 from datetime import datetime
 
 from linebot.v3.messaging import (
@@ -21,13 +21,12 @@ from linebot.v3.messaging import (
     TextMessage,
 )
 
-from . import ai_feedback, drive_knowledge, lake, lake_knowledge
+from . import ai_feedback, drive_knowledge, feedback_box, lake, lake_knowledge
 from .inference import record_inference
 from .llm import answer_question, model_for
 from .models import (
     Conversation,
     ConversationTurn,
-    Escalation,
     InferenceUsage,
     Member,
 )
@@ -39,11 +38,12 @@ logger = logging.getLogger("jci-agent.assistant")
 #: 保持する会話ターン数（直近3往復）
 MAX_TURNS = 6
 
-ESCALATION_NOTE = "この件を事務局に取り次ぐ場合は、下の［事務局に取り次ぐ］を押してください。"
-ESCALATED_TEXT = "事務局に取り次ぎました。担当者から折り返しご連絡します。"
+ESCALATION_NOTE = ("うまく答えられなかった質問は、下の［意見箱に送る］で知らせていただけると、"
+                   "答えられるよう改善に役立てます。")
+#: postback の識別子。以前の［事務局に取り次ぐ］のボタン（`esc|…`）も同じ扱いで意見箱に保存する
 ACTION_ESCALATE = "esc"
-ESCALATE_LABEL = "事務局に取り次ぐ"
-#: postback のデータの上限（300字）に収めるため、取り次ぐ質問はこの長さまで
+ESCALATE_LABEL = "意見箱に送る"
+#: postback のデータの上限（300字）に収めるため、送る質問はこの長さまで
 ESCALATE_TEXT_MAX = 250
 
 
@@ -65,18 +65,6 @@ def _remember(
     conversation.turns = conversation.turns[-MAX_TURNS:]
     conversation.updated_at = now
     repo.save_conversation(conversation)
-
-
-def _escalate(repo: Repository, member: Member, question: str, *, now: datetime) -> None:
-    repo.save_escalation(
-        Escalation(
-            escalation_id=f"esc_{uuid.uuid4().hex[:10]}",
-            member_id=member.member_id,
-            kind="question",
-            text=question,
-            created_at=now,
-        )
-    )
 
 
 def answer_member_question(
@@ -145,13 +133,9 @@ def answer_member_question(
 def handle_escalate_postback(
     repo: Repository, member: Member, data: str, *, now: datetime
 ) -> list[Message]:
-    """［事務局に取り次ぐ］（`esc|<質問>`）を押したときだけ Escalation を起票する。"""
+    """［意見箱に送る］（`esc|<質問>`）を押したときだけ、その質問を意見箱に保存する。"""
     question = data.split("|", 1)[1].strip() if "|" in data else ""
     if not question:
         return [TextMessage(text="この操作は無効です。")]
-    # 同じ質問の二重押しでは2件にしない
-    for esc in repo.list_escalations(status="open"):
-        if esc.member_id == member.member_id and esc.text == question:
-            return [TextMessage(text=ESCALATED_TEXT)]
-    _escalate(repo, member, question, now=now)
-    return [TextMessage(text=ESCALATED_TEXT)]
+    feedback_box.save_unanswered(repo, member, question, now)
+    return [TextMessage(text=feedback_box.UNANSWERED_SAVED)]

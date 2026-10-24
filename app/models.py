@@ -831,3 +831,66 @@ class ScheduledPost(BaseModel):
     error: str | None = None
     created_at: datetime | None = None
     created_by: str | None = None
+
+
+# --------------------------------------------------------------------------- #
+# 意見箱（docs/feedback-box-design.md）
+# --------------------------------------------------------------------------- #
+class FeedbackKind(StrEnum):
+    bug = "bug"  # 不具合
+    feature = "feature"  # ほしい機能
+    usability = "usability"  # 使いにくい点
+    other = "other"  # その他
+    unanswered = "unanswered"  # AI が答えられなかった質問（［意見箱に送る］）
+
+
+class FeedbackStatus(StrEnum):
+    new = "new"  # 新規
+    in_progress = "in_progress"  # 対応中
+    done = "done"  # 完了
+    declined = "declined"  # 見送り
+
+
+class FeedbackTriage(BaseModel):
+    """AI による分類（送った人の選んだ種類は kind に残し、補正はここに持つ）。"""
+
+    kind: FeedbackKind | None = None
+    feature: str | None = None  # 対象の機能（出欠・日程調整・AIの回答 など）
+    urgency: str | None = None  # 高 | 中 | 低
+    summary: str | None = None  # 一行要約
+    model: str | None = None
+    classified_at: datetime | None = None
+
+
+class Feedback(BaseModel):
+    """意見箱に届いた1件。匿名なら member_id を保存しない。"""
+
+    feedback_id: str
+    kind: FeedbackKind
+    text: str
+    anonymous: bool = False
+    member_id: str | None = None  # 匿名なら None（LINE の userId も保存しない）
+    source: str = "liff"  # liff | chat（AI が答えられなかった質問）
+    status: FeedbackStatus = FeedbackStatus.new
+    triage: FeedbackTriage | None = None
+    triage_failed_at: datetime | None = None  # 分類に失敗した時刻（次の tick で再試行）
+    notified_at: datetime | None = None  # 専務理事に LINE で知らせた時刻
+    created_at: datetime
+    updated_at: datetime | None = None
+    updated_by: str | None = None
+
+
+class FeedbackTheme(BaseModel):
+    label: str
+    count: int = 0
+    feedback_ids: list[str] = Field(default_factory=list)
+
+
+class FeedbackDigest(BaseModel):
+    """意見箱の傾向のまとめ（似た意見をまとめた論点と件数）。"""
+
+    summary: str
+    themes: list[FeedbackTheme] = Field(default_factory=list)
+    count: int = 0  # まとめた意見の件数
+    model: str | None = None
+    generated_at: datetime | None = None

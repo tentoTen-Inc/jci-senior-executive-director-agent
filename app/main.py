@@ -47,6 +47,7 @@ from . import (
     config,
     doc_session,
     drive_knowledge,
+    feedback_box,
     file_links,
     gmail,
     lake,
@@ -63,6 +64,7 @@ from .calendar_intent import ACTION_CAL, handle_calendar_postback
 from .calendar_sync import retry_pending
 from .delivery import execute_delivery
 from .deps import get_repo
+from .feedback_api import router as feedback_router
 from .gmail_import import import_gmail_notices
 from .invite import verify_and_link
 from .lake_api import router as lake_router
@@ -127,6 +129,7 @@ app.include_router(surveys_router, prefix="/admin")
 app.include_router(surveys_router, prefix="/api")
 app.include_router(lake_router, prefix="/api")  # LINEグループ（データレイク）
 app.include_router(polls_router, prefix="/api")  # 日程調整（管理）
+app.include_router(feedback_router, prefix="/api")  # 意見箱（管理）
 app.include_router(liff_router)  # 日程調整の LIFF 画面（公開・LINE ログインで本人確認）
 app.include_router(liff_menu_router)  # メニューの LIFF 画面（予定と出欠など。公開・IDトークン）
 app.include_router(link_router, prefix="/api")  # LINE 連携の申請・予約投稿（管理）
@@ -487,6 +490,12 @@ def tasks_tick():
                 "halted": report.halted,
             }
         )
+    # 意見箱: AI の分類と専務理事への通知（docs/feedback-box-design.md §4）
+    try:
+        feedback_result = feedback_box.process(repo, now)
+    except Exception:  # noqa: BLE001 - 催促・取込を巻き込まない
+        logger.exception("意見箱の処理に失敗しました")
+        feedback_result = {"error": "feedback_failed"}
     # 取込・索引は時間がかかるので、会員に届く催促を送り終えてから行う。
     # ドライブの資料を取り込んでから索引する（同じ tick で新しい資料も検索できるように）
     lake_result = {"redact": redact_unsent(), "drive": drive_knowledge.sync(),
@@ -496,6 +505,7 @@ def tasks_tick():
     return {
         "planned": len(jobs), "results": results, "gmail": gmail_result, "gcal": gcal_result,
         "lake": lake_result, "posts": posts_result, "proposals": proposals_result,
+        "feedback": feedback_result,
     }
 
 

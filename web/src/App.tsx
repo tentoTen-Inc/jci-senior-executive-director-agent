@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { api } from "./api/client";
 
 // メニュー構成は docs/admin-ui-design.md §3
-type Counts = { home: number; polls: number; members: number };
+type Counts = { home: number; polls: number; members: number; feedback: number };
 type NavItem = { to: string; label: string; end?: boolean; count?: keyof Counts; also?: string[] };
 
 const MAIN: NavItem[] = [
@@ -13,6 +13,7 @@ const MAIN: NavItem[] = [
   { to: "/members", label: "会員・LINE連携", count: "members" },
   { to: "/proposals", label: "議案" },
   { to: "/notices", label: "連絡・アンケート", also: ["/surveys"] },
+  { to: "/feedback", label: "意見箱", count: "feedback" },
 ];
 const RECORDS: NavItem[] = [
   { to: "/line-groups", label: "LINE のやり取り" },
@@ -22,7 +23,7 @@ const RECORDS: NavItem[] = [
 ];
 
 type HomeCounts = {
-  action_required: { open_escalations: number; link_requests?: number };
+  action_required: { open_escalations: number; link_requests?: number; new_feedback?: number };
   polls?: unknown[];
 };
 
@@ -37,6 +38,7 @@ function useCounts(): Counts | null {
           home: a.open_escalations + (a.link_requests ?? 0),
           polls: h.polls?.length ?? 0,
           members: a.link_requests ?? 0,
+          feedback: a.new_feedback ?? 0,
         });
       })
       .catch(() => {});

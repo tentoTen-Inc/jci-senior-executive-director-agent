@@ -22,6 +22,8 @@ from .models import (
     Event,
     EventStatus,
     ExternalNotice,
+    Feedback,
+    FeedbackDigest,
     InferenceLog,
     InviteCode,
     LineGroup,
@@ -68,6 +70,8 @@ COL_POLLS = "schedulePolls"
 COL_POLL_RESPONSES = "pollResponses"
 COL_LINK_REQUESTS = "lineLinkRequests"
 COL_SCHEDULED_POSTS = "scheduledPosts"
+COL_FEEDBACK = "feedbackBox"  # 意見箱（docs/feedback-box-design.md）
+FEEDBACK_DIGEST_DOC = "feedbackDigest"  # settings コレクション内の傾向のまとめ
 COL_LINE_EVENT_CLAIMS = "lineEventClaims"  # TTL（expire_at）で自動削除
 LINE_EVENT_CLAIM_TTL = timedelta(days=7)  # LINE の再送・Pub/Sub の保持（7日）より長く
 SETTINGS_DOC = "global"
@@ -477,3 +481,28 @@ class FirestoreRepository:
         return sorted((ScheduledPost.model_validate(d.to_dict())
                        for d in self._db.collection(COL_SCHEDULED_POSTS).stream()),
                       key=lambda p: p.send_at)
+
+    # --- 意見箱 ---
+    def save_feedback(self, feedback: Feedback) -> None:
+        self._db.collection(COL_FEEDBACK).document(feedback.feedback_id).set(
+            feedback.model_dump(mode="json")
+        )
+
+    def get_feedback(self, feedback_id: str) -> Feedback | None:
+        snap = self._db.collection(COL_FEEDBACK).document(feedback_id).get()
+        return Feedback.model_validate(snap.to_dict()) if snap.exists else None
+
+    def list_feedback(self) -> list[Feedback]:
+        """新しい順。"""
+        return sorted((Feedback.model_validate(d.to_dict())
+                       for d in self._db.collection(COL_FEEDBACK).stream()),
+                      key=lambda f: f.created_at, reverse=True)
+
+    def save_feedback_digest(self, digest: FeedbackDigest) -> None:
+        self._db.collection(COL_SETTINGS).document(FEEDBACK_DIGEST_DOC).set(
+            digest.model_dump(mode="json")
+        )
+
+    def get_feedback_digest(self) -> FeedbackDigest | None:
+        snap = self._db.collection(COL_SETTINGS).document(FEEDBACK_DIGEST_DOC).get()
+        return FeedbackDigest.model_validate(snap.to_dict()) if snap.exists else None

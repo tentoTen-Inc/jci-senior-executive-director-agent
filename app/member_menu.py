@@ -2,13 +2,12 @@
 
 **原則: リッチメニューのボタンで作業を始めない限り、チャットは検索・回答のみで書き込まない。**
 
-- メニューのボタン（postback `menu|<label>`）: 次回予定・自分の出欠状況・出欠回答・事務局連絡、
+- メニューのボタン（postback `menu|<label>`）: 予定と出欠・日程調整・AIに聞く・意見箱、
   理事・五役の［資料を作る・直す］［予定を登録・変更］。書き込みはボタンから始めた流れの中だけ。
 - 自由文: 質問として答える。書き込みの依頼に見える文には、その作業を始めるボタンを返すだけ。
 """
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, timedelta
 
 from linebot.v3.messaging import (
@@ -19,7 +18,7 @@ from linebot.v3.messaging import (
     TextMessage,
 )
 
-from . import committee_docs, doc_session, menu_lists
+from . import committee_docs, doc_session, feedback_box, menu_lists
 from .assistant import answer_member_question
 from .calendar_intent import HELP_TEXT as CALENDAR_HELP_TEXT
 from .calendar_intent import can_edit_calendar, looks_like_calendar_write, try_calendar_intent
@@ -30,7 +29,6 @@ from .line_messages import build_attendance_request
 from .models import (
     AttendanceStatus,
     ChatState,
-    Escalation,
     Event,
     EventStatus,
     Member,
@@ -42,6 +40,7 @@ from .repository import Repository
 MENU_SCHEDULE = "次回の予定"
 MENU_MY_ATT = "自分の出欠状況"
 MENU_ANSWER = "出欠を回答"
+#: 「事務局に連絡」はやめた（docs/feedback-box-design.md §2）。届いたら意見箱の案内を返すだけ
 MENU_CONTACT = "事務局に連絡"
 #: 旧メニュー（2×2）のボタン。届いても動くよう残す
 LEGACY_ITEMS = [MENU_SCHEDULE, MENU_MY_ATT, MENU_ANSWER, MENU_CONTACT]
@@ -49,6 +48,7 @@ LEGACY_ITEMS = [MENU_SCHEDULE, MENU_MY_ATT, MENU_ANSWER, MENU_CONTACT]
 MENU_EVENTS = "予定と出欠"
 MENU_POLLS = "日程調整"
 MENU_ASK = "AIに聞く"
+MENU_FEEDBACK = "意見箱"
 MENU_DOCS = "資料を作る・直す"
 MENU_PROPOSALS = "委員会の議案"
 # 五役の「運営」タブ
@@ -61,7 +61,7 @@ MENU_ADMIN = "管理画面を開く"
 MENU_HELP = "使い方"
 ADMIN_URL = "https://admin.647jc.org"
 #: 全員のメニューのボタン（クイックリプライのメニューにも使う）
-MENU_ITEMS = [MENU_EVENTS, MENU_POLLS, MENU_ASK, MENU_CONTACT]
+MENU_ITEMS = [MENU_EVENTS, MENU_POLLS, MENU_ASK, MENU_FEEDBACK]
 
 
 def build_menu(prompt: str = "ご用件をお選びください。") -> TextMessage:
@@ -136,22 +136,6 @@ def answer_prompt_message(repo: Repository, member: Member, now: datetime) -> Me
     return build_attendance_request(target)
 
 
-def record_contact(repo: Repository, member: Member, now: datetime) -> TextMessage:
-    esc = Escalation(
-        escalation_id=f"esc_{uuid.uuid4().hex[:10]}",
-        member_id=member.member_id,
-        kind="contact",
-        created_at=now,
-    )
-    repo.save_escalation(esc)
-    return TextMessage(
-        text=(
-            "事務局への連絡を受け付けました。担当者から折り返しご連絡します。\n"
-            "お急ぎの場合は、案内文のお問い合わせ先へ直接ご連絡ください。"
-        )
-    )
-
-
 #: ［予定を登録・変更］の後、予定の指示として読む時間（その後の1通だけ）
 CALENDAR_TTL = timedelta(minutes=10)
 ATTENDANCE_WORDS = ("出欠を回答", "回答", "出席", "欠席")
@@ -166,11 +150,10 @@ CALENDAR_GUIDE = (
     "チャットの文だけでは予定を書き換えません。"
 )
 ATTENDANCE_GUIDE = "出欠の回答は、下の［予定と出欠］から行えます。"
-CONTACT_GUIDE = "事務局への連絡は、下の［事務局に連絡］を押すと受け付けます。"
 HELP_GUIDE = (
     "【専務AIの使い方】\n"
     "・ふだんのトークは、質問への回答だけを行います（資料や予定を書き換えることはありません）。\n"
-    "・出欠の回答、事務局への連絡は、メニューのボタンからどうぞ。\n"
+    "・出欠の回答はメニューの［予定と出欠］、ご意見は［意見箱］からどうぞ。\n"
     "・資料の作成・更新は［資料を作る・直す］から。対象の資料を選んでから指示を送ります。"
 )
 CALENDAR_NOT_OFFICER = "予定の登録・変更は、五役・監事・事務局のみご利用いただけます。"
@@ -223,8 +206,9 @@ def _menu(repo: Repository, member: Member, label: str, now: datetime) -> list[M
         return [menu_lists.polls_message(repo, member)]
     if label == MENU_ASK:
         return [menu_lists.ask_message()]
-    if label == MENU_CONTACT:
-        return [record_contact(repo, member, now)]
+    if label in (MENU_FEEDBACK, MENU_CONTACT):
+        # LIFF の意見箱を開く案内だけ（書き込みなし）。「事務局に連絡」は旧ボタン
+        return [feedback_box.guide_message()]
     if label == MENU_DOCS:
         return doc_session.start_menu(repo, member, now)
     if label == MENU_PROPOSALS:
@@ -300,7 +284,7 @@ def handle_member_text(
         # 出欠の案内（出席・欠席のボタン）を見せるだけ。登録はボタンを押したとき
         return [answer_prompt_message(repo, member, now)]
     if command and any(k in t for k in CONTACT_WORDS):
-        return [_button(MENU_CONTACT, CONTACT_GUIDE)]
+        return [feedback_box.guide_message()]
     if command and any(k in t for k in ("メニュー", "menu", "ヘルプ", "help", "使い方")):
         return [build_menu()]
 
