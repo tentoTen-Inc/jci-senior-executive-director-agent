@@ -31,6 +31,13 @@ Google は OOB（`urn:ietf:wg:oauth:2.0:oob`＝コードを画面表示する方
 スコープは既定で gmail.readonly のみ（送信・削除はしない）。
 議案（事業計画書）の作成（docs/proposal-ledger-design.md §6）を使うときは `--with-drive` を付けて
 drive スコープも許可する（LOM 公式アカウントとしてフォルダ・文書を作るため）。
+見積依頼などのメール送信（段階4）を使うときは `--with-send` で gmail.send も許可する。
+クライアントID・シークレットは、登録済みのものを `--client-from-secrets` で
+Secret Manager から読める。
+
+    # 例: 登録済みのクライアントで、drive と送信も含めて同意し直す
+    python scripts/gmail_oauth_setup.py --client-from-secrets --with-drive --with-send \
+        --write-secrets
 """
 from __future__ import annotations
 
@@ -49,6 +56,7 @@ AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
+SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
 DEFAULT_PORT = 8765
 #: 未確認アプリの警告画面を通る時間も見て余裕をとる
 DEFAULT_TIMEOUT = 900
@@ -61,12 +69,23 @@ def redirect_uri(port: int) -> str:
     return f"http://localhost:{port}/"
 
 
-def auth_url(client_id: str, port: int, *, with_drive: bool = False) -> str:
+def scopes(*, with_drive: bool = False, with_send: bool = False) -> str:
+    """同意を求めるスコープ（gmail.readonly ＋ 必要なもの）。"""
+    picked = [SCOPE]
+    if with_drive:
+        picked.append(DRIVE_SCOPE)
+    if with_send:
+        picked.append(SEND_SCOPE)
+    return " ".join(picked)
+
+
+def auth_url(client_id: str, port: int, *, with_drive: bool = False,
+             with_send: bool = False) -> str:
     params = {
         "client_id": client_id,
         "redirect_uri": redirect_uri(port),
         "response_type": "code",
-        "scope": f"{SCOPE} {DRIVE_SCOPE}" if with_drive else SCOPE,
+        "scope": scopes(with_drive=with_drive, with_send=with_send),
         "access_type": "offline",
         "prompt": "consent",  # 毎回 refresh token を返させる
     }
@@ -206,6 +225,16 @@ def print_secret_commands(project: str, values: dict[str, str]) -> None:
     )
 
 
+def read_secret(secret_id: str, project: str) -> str:
+    """Secret Manager の最新の値（gcloud のログインで読む）。"""
+    out = subprocess.run(
+        ["gcloud", "secrets", "versions", "access", "latest", "--secret", secret_id,
+         "--project", project],
+        capture_output=True, text=True, check=True,
+    )
+    return out.stdout.strip()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Gmail の refresh token を取得する")
     parser.add_argument("--client-id")
@@ -221,6 +250,10 @@ def main() -> None:
     parser.add_argument("--project", default="jci-sed-agent")
     parser.add_argument("--with-drive", action="store_true",
                         help="drive スコープも許可する（議案の作成で使う）")
+    parser.add_argument("--with-send", action="store_true",
+                        help="gmail.send も許可する（見積依頼などのメール送信で使う）")
+    parser.add_argument("--client-from-secrets", action="store_true",
+                        help="登録済みのクライアントID・シークレットを Secret Manager から読む")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument(
         "--timeout", type=int, default=DEFAULT_TIMEOUT,
@@ -242,12 +275,16 @@ def main() -> None:
             )
     elif args.client_id and args.client_secret:
         client_id, client_secret = args.client_id, args.client_secret
+    elif args.client_from_secrets:
+        client_id = read_secret("gmail-oauth-client-id", args.project)
+        client_secret = read_secret("gmail-oauth-client-secret", args.project)
     else:
         raise SystemExit(
-            "--client-secret-file か、--client-id と --client-secret を指定してください。"
+            "--client-secret-file か、--client-id と --client-secret、"
+            "または --client-from-secrets を指定してください。"
         )
 
-    url = auth_url(client_id, args.port, with_drive=args.with_drive)
+    url = auth_url(client_id, args.port, with_drive=args.with_drive, with_send=args.with_send)
     print("\n次のURLをブラウザで開き、専用Gmailアカウントで許可してください:\n", flush=True)
     print(url, flush=True)
     print(f"\n（戻り先: {redirect_uri(args.port)}）", flush=True)
