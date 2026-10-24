@@ -1,6 +1,6 @@
-"""会員ごとに立場に合ったリッチメニューを結びつける（docs/doc-session-design.md §3）。
+"""会員ごとに立場に合ったリッチメニューを結びつける（docs/liff-menu-design.md §2）。
 
-メニューの ID は Settings.rich_menus（member / board / officer）に入っている
+メニューの ID は Settings.rich_menus（member / board / officer / officer_ops）に入っている
 （scripts/setup_rich_menu.py が作成して登録する）。未登録なら何もしない。
 LINE 連携の承認・招待コードでの連携・組織図の取込のときに呼ぶ。`_post` がテストのモック境界。
 """
@@ -9,8 +9,7 @@ from __future__ import annotations
 import logging
 import urllib.request
 
-from . import committee_docs, config
-from .calendar_intent import can_edit_calendar
+from . import config, roles
 from .models import Member
 from .repository import Repository
 from .rich_menu import BOARD, MEMBER, OFFICER
@@ -22,10 +21,10 @@ API = "https://api.line.me/v2/bot/user"
 
 def kind_for(member: Member) -> str:
     """会員の立場に合ったメニューの種類。"""
-    if can_edit_calendar(member):
-        return OFFICER  # 五役・監事・事務局（予定の登録・変更ができる）
-    if committee_docs.is_board_member(member):
-        return BOARD  # 委員長など（資料の作成・更新ができる）
+    if roles.is_ops(member):
+        return OFFICER  # 五役・監事・事務局（「みんな」「運営」のタブ。1枚目を結ぶ）
+    if roles.is_board(member):
+        return BOARD  # 委員長・直前理事長（資料の作業・委員会の議案）
     return MEMBER
 
 

@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""立場ごとのリッチメニューを生成して LINE に登録する（docs/doc-session-design.md §3）。
+"""立場ごとのリッチメニューを生成して LINE に登録する（docs/liff-menu-design.md §2）。
 
 使い方（リポジトリ直下・direnv 有効な状態で）:
-  python scripts/setup_rich_menu.py --image-only out_dir/   # 画像の生成のみ（3種類）
-  python scripts/setup_rich_menu.py --create      # 3種類を作成して ID を設定に保存、会員用を既定に
+  python scripts/setup_rich_menu.py --image-only out_dir/   # 画像の生成のみ（4種類）
+  python scripts/setup_rich_menu.py --create [--liff-id ID]
+      # 会員・理事・五役（みんな／運営のタブ2枚）を作成し、タブのエイリアスを張り、
+      # ID を設定に保存して会員用を既定にする。--liff-id を渡すと LIFF のボタンは LIFF を直接開く
   python scripts/setup_rich_menu.py --link-all    # 連携済みの会員に立場のメニューを結ぶ
 
-- 作成した ID は Firestore の Settings.rich_menus（member / board / officer）に保存する。
+- 作成した ID は Firestore の Settings.rich_menus（member/board/officer/officer_ops）に保存。
   アプリ（LINE 連携の承認・招待コード・組織図の取込）はここを読んで会員ごとに結びつける。
 - LINE のチャネルアクセストークンは Secret Manager から読む（gcloud のログインを使う）。
 - 登録は LINE Messaging API を直接叩く（line-bot-sdk のバージョン差異を避けるため urllib）。
@@ -15,12 +17,19 @@ import argparse
 import json
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.rich_menu import KINDS, MEMBER, generate_image, rich_menu_definition  # noqa: E402
+from app.rich_menu import (  # noqa: E402
+    KINDS,
+    MEMBER,
+    TABS,
+    generate_image,
+    rich_menu_definition,
+)
 
 PROJECT = "jci-sed-agent"
 API = "https://api.line.me"
@@ -57,13 +66,14 @@ def _repo():
                                                        credentials=Credentials(token)))
 
 
-def create(token: str, workdir: Path) -> dict[str, str]:
-    """3種類のメニューを作成して画像を載せ、{種類: ID} を返す。"""
+def create(token: str, workdir: Path, liff_id: str | None) -> dict[str, str]:
+    """4種類のメニューを作成して画像を載せ、五役のタブのエイリアスを張り、{種類: ID} を返す。"""
     ids = {}
     for kind in KINDS:
         image = generate_image(str(workdir / f"rich_menu_{kind}.png"), kind)
+        definition = rich_menu_definition(kind=kind, liff_id=liff_id)
         status, body = _req(f"{API}/v2/bot/richmenu", token, method="POST",
-                            data=json.dumps(rich_menu_definition(kind=kind)).encode(),
+                            data=json.dumps(definition).encode(),
                             content_type="application/json")
         menu_id = json.loads(body)["richMenuId"]
         with open(image, "rb") as f:
@@ -71,13 +81,24 @@ def create(token: str, workdir: Path) -> dict[str, str]:
                  data=f.read(), content_type="image/png")
         print(f"作成: {kind} = {menu_id} (HTTP {status})")
         ids[kind] = menu_id
+    for kind, (alias, _label) in TABS.items():
+        body = json.dumps({"richMenuAliasId": alias, "richMenuId": ids[kind]}).encode()
+        try:
+            _req(f"{API}/v2/bot/richmenu/alias", token, method="POST", data=body,
+                 content_type="application/json")
+        except urllib.error.HTTPError:  # すでにあれば付け替える
+            _req(f"{API}/v2/bot/richmenu/alias/{alias}", token, method="POST",
+                 data=json.dumps({"richMenuId": ids[kind]}).encode(),
+                 content_type="application/json")
+        print(f"タブ: {alias} → {kind}")
     return ids
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--image-only", metavar="DIR", default=None, help="画像だけ生成する")
-    ap.add_argument("--create", action="store_true", help="3種類を作成して設定に保存する")
+    ap.add_argument("--create", action="store_true", help="4種類を作成して設定に保存する")
+    ap.add_argument("--liff-id", default=None, help="LIFF のボタンで直接開く LIFF の ID")
     ap.add_argument("--link-all", action="store_true", help="連携済みの会員に結びつける")
     args = ap.parse_args()
 
@@ -94,7 +115,7 @@ def main() -> int:
     repo = _repo()
     if args.create:
         token = _line_token()
-        ids = create(token, Path("/tmp"))
+        ids = create(token, Path("/tmp"), args.liff_id)
         settings = repo.get_settings()
         settings.rich_menus = ids
         repo.save_settings(settings)

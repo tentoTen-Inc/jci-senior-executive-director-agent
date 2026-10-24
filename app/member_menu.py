@@ -19,7 +19,7 @@ from linebot.v3.messaging import (
     TextMessage,
 )
 
-from . import committee_docs
+from . import committee_docs, menu_lists
 from .assistant import answer_member_question
 from .calendar_intent import HELP_TEXT as CALENDAR_HELP_TEXT
 from .calendar_intent import can_edit_calendar, looks_like_calendar_write, try_calendar_intent
@@ -43,11 +43,25 @@ MENU_SCHEDULE = "次回の予定"
 MENU_MY_ATT = "自分の出欠状況"
 MENU_ANSWER = "出欠を回答"
 MENU_CONTACT = "事務局に連絡"
-MENU_ITEMS = [MENU_SCHEDULE, MENU_MY_ATT, MENU_ANSWER, MENU_CONTACT]
-# 立場ごとのリッチメニューにだけ出るボタン（docs/doc-session-design.md §3）
+#: 旧メニュー（2×2）のボタン。届いても動くよう残す
+LEGACY_ITEMS = [MENU_SCHEDULE, MENU_MY_ATT, MENU_ANSWER, MENU_CONTACT]
+# 立場ごとのリッチメニューのボタン（docs/liff-menu-design.md §2）
+MENU_EVENTS = "予定と出欠"
+MENU_POLLS = "日程調整"
+MENU_ASK = "AIに聞く"
 MENU_DOCS = "資料を作る・直す"
+MENU_PROPOSALS = "委員会の議案"
+# 五役の「運営」タブ
 MENU_CALENDAR = "予定を登録・変更"
+MENU_ATT_STATUS = "出欠の状況"
+MENU_POLL_NEW = "日程調整を作る"
+MENU_APPROVALS = "承認待ち"
+MENU_ADMIN = "管理画面を開く"
+# 旧メニュー（使い方）。届いても動くよう残す
 MENU_HELP = "使い方"
+ADMIN_URL = "https://admin.647jc.org"
+#: 全員のメニューのボタン（クイックリプライのメニューにも使う）
+MENU_ITEMS = [MENU_EVENTS, MENU_POLLS, MENU_ASK, MENU_CONTACT]
 
 
 def build_menu(prompt: str = "ご用件をお選びください。") -> TextMessage:
@@ -151,7 +165,7 @@ CALENDAR_GUIDE = (
     "予定の登録・変更は、［予定を登録・変更］を押してから送ってください。"
     "チャットの文だけでは予定を書き換えません。"
 )
-ATTENDANCE_GUIDE = "出欠の回答は、下の［出欠を回答］から行えます。"
+ATTENDANCE_GUIDE = "出欠の回答は、下の［予定と出欠］から行えます。"
 CONTACT_GUIDE = "事務局への連絡は、下の［事務局に連絡］を押すと受け付けます。"
 HELP_GUIDE = (
     "【専務AIの使い方】\n"
@@ -200,21 +214,43 @@ def _calendar_turn(repo: Repository, member: Member, text: str, now: datetime) -
 
 
 def _menu(repo: Repository, member: Member, label: str, now: datetime) -> list[Message]:
-    """リッチメニューのボタン。書き込みが始まるのはここからだけ。"""
+    """リッチメニューのボタン（docs/liff-menu-design.md §2・§4）。書き込みが始まるのはここからだけ。
+
+    LIFF の画面があるボタンは、LIFF が使えるメニューでは LIFF を直接開く。ここに届くのは
+    LIFF が無い・未設定のときの代わり（トークに一覧を返す。読むだけ）。
+    """
+    if label == MENU_EVENTS:
+        return [next_schedule_message(repo, now), answer_prompt_message(repo, member, now)]
+    if label == MENU_POLLS:
+        return [menu_lists.polls_message(repo, member)]
+    if label == MENU_ASK:
+        return [menu_lists.ask_message()]
+    if label == MENU_CONTACT:
+        return [record_contact(repo, member, now)]
+    if label == MENU_DOCS:
+        if not committee_docs.is_board_member(member):
+            return [TextMessage(text=DOCS_NOT_BOARD)]
+        return [TextMessage(text=DOCS_COMING)]
+    if label == MENU_PROPOSALS:
+        return [menu_lists.proposals_message(repo, member)]
+    # 五役の「運営」タブ
+    if label == MENU_CALENDAR:
+        return _start_calendar(repo, member, now)
+    if label == MENU_ATT_STATUS:
+        return [menu_lists.attendance_status_message(repo, member, now)]
+    if label == MENU_POLL_NEW:
+        return [menu_lists.poll_new_message(member)]
+    if label == MENU_APPROVALS:
+        return [menu_lists.approvals_message(repo, member)]
+    if label == MENU_ADMIN:
+        return [TextMessage(text=f"管理画面: {ADMIN_URL}")]
+    # 旧メニュー（届いても動くよう残す）
     if label == MENU_SCHEDULE:
         return [next_schedule_message(repo, now)]
     if label == MENU_MY_ATT:
         return [my_attendance_message(repo, member, now)]
     if label == MENU_ANSWER:
         return [answer_prompt_message(repo, member, now)]
-    if label == MENU_CONTACT:
-        return [record_contact(repo, member, now)]
-    if label == MENU_CALENDAR:
-        return _start_calendar(repo, member, now)
-    if label == MENU_DOCS:
-        if not committee_docs.is_board_member(member):
-            return [TextMessage(text=DOCS_NOT_BOARD)]
-        return [TextMessage(text=DOCS_COMING)]
     if label == MENU_HELP:
         return [TextMessage(text=HELP_GUIDE)]
     return [build_menu()]
@@ -271,7 +307,7 @@ def handle_member_text(
     attendance = any(k in t for k in ATTENDANCE_WORDS)
     messages = answer_member_question(repo, member, t, now=now)
     if messages is not None:
-        return _with_button(messages, MENU_ANSWER) if attendance else messages
+        return _with_button(messages, MENU_EVENTS) if attendance else messages
     if attendance:
-        return [_button(MENU_ANSWER, ATTENDANCE_GUIDE)]
+        return [_button(MENU_EVENTS, ATTENDANCE_GUIDE)]
     return [build_menu(f"「{text}」について、以下からお選びください。")]

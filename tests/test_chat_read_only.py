@@ -147,7 +147,7 @@ def test_attendance_free_text_answers_and_offers_button(repo):
     messages = handle_member_text(repo, MEMBERS["会員"], "11月例会は仕事のため欠席でお願いします",
                                   now=NOW)
     labels = [i.action.label for i in messages[-1].quick_reply.items]
-    assert "出欠を回答" in labels and "事務局に取り次ぐ" in labels
+    assert "予定と出欠" in labels and "事務局に取り次ぐ" in labels
 
 
 def test_non_board_write_like_text_is_just_a_question(repo):

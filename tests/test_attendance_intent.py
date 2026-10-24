@@ -144,7 +144,7 @@ def test_routing_free_text_does_not_register(monkeypatch, repo):
                         lambda *a, **kw: pytest.fail("自由文から出欠を解釈しない"))
     monkeypatch.setattr("app.member_menu.answer_member_question", lambda *a, **kw: None)
     messages = handle_member_text(repo, member(repo), "来週の例会は欠席でお願いします", now=NOW)
-    assert messages[0].quick_reply.items[0].action.data == "menu|出欠を回答"
+    assert messages[0].quick_reply.items[0].action.data == "menu|予定と出欠"
 
 
 def test_routing_menu_action_keeps_existing_prompt(monkeypatch, repo):

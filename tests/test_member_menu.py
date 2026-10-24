@@ -91,7 +91,7 @@ def test_menu_keyword():
     repo, member = setup()
     msgs = handle_member_text(repo, member, "メニュー", now=NOW)
     labels = [i.action.label for i in msgs[0].quick_reply.items]
-    assert "次回の予定" in labels and "事務局に連絡" in labels
+    assert labels == ["予定と出欠", "日程調整", "AIに聞く", "事務局に連絡"]
 
 
 # --------------------------------------------------------------------------- #
