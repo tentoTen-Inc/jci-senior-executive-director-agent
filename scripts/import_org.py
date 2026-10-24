@@ -48,6 +48,8 @@ def _describe(member) -> str:
         parts.append(member.officer_role)
     if seats:
         parts.append(seats)
+    if member.supervised_committees:
+        parts.append("担当:" + "・".join(member.supervised_committees))
     if member.secondments:
         parts.append("出向:" + "・".join(f"{s.org} {s.role}" for s in member.secondments))
     if member.line_user_id:
