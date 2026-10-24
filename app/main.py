@@ -356,7 +356,8 @@ def handle_event(event) -> None:
         data = event.postback.data
         logger.info("postback event: userId=%s data=%s", user_id, data)
         messages = handle_postback(user_id, data)
-        reply_messages(event.reply_token, messages)
+        if messages:
+            reply_messages(event.reply_token, messages)
     else:
         logger.info("other event: %s", type(event).__name__)
 
@@ -390,6 +391,9 @@ def dispatch_event(event, *, fail_open: bool) -> bool:
 
 def handle_postback(user_id: str, data: str) -> list[Message]:
     """postback（出欠ボタン・メニュー）を処理してメッセージ列を返す。"""
+    # リッチメニューのタブ切り替え（richmenuswitch）。LINE 側で切り替わるので返事はしない
+    if data.startswith("tab:"):
+        return []
     repo = get_repo()
     member = repo.get_member_by_line_user_id(user_id)
     if member is None:
