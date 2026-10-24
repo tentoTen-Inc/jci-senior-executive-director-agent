@@ -124,3 +124,11 @@ def test_legacy_buttons_still_work(repo):
     assert "11月例会" in _tap(repo, REG, "次回の予定")[0].text
     assert "あなたの出欠状況" in _tap(repo, REG, "自分の出欠状況")[0].text
     assert "専務AIの使い方" in _tap(repo, REG, "使い方")[0].text
+
+
+def test_tab_switch_postback_gets_no_reply(monkeypatch):
+    """五役のタブ切り替え（richmenuswitch の data=tab:…）には返事をしない。"""
+    from app import main
+
+    for data in ("tab:main", "tab:ops"):
+        assert main.handle_postback("U_anyone", data) == []
