@@ -135,3 +135,50 @@ def test_apply_sends_required_revision(monkeypatch):
     committee_docs.apply("doc1", "rev9", [{"insertText": {}}], "tok")
     assert sent["url"].endswith("/doc1:batchUpdate")
     assert sent["body"]["writeControl"] == {"requiredRevisionId": "rev9"}
+
+
+# --------------------------------------------------------------------------- #
+# 事業計画書（2027年度様式）の読み取り（docs/proposal-ledger-design.md §3）
+# --------------------------------------------------------------------------- #
+PLAN = json.loads((Path(__file__).parent / "fixtures" / "business_plan_doc.json").read_text())
+
+
+def test_business_plan_basics_from_key_value_table():
+    fields = {f.name: f for f in committee_docs.extract_fields(PLAN)}
+    for name in ("事業名", "ファイル名", "委員会名", "職務分掌", "担当副理事長", "委員長",
+                 "文書作成人（役職/氏名）", "文書作成日時"):
+        assert name in fields and fields[name].editable
+    assert fields["専務理事確認日"].text == "月　日(　)"
+    assert fields["審議対象資料(★)"].text == "予算書"
+
+
+def test_business_plan_subheadings_become_fields():
+    fields = {f.name: f for f in committee_docs.extract_fields(PLAN)}
+    for name in ("1.事業実施に至る背景・問題", "1.事業実施に至る背景・問題の原因",
+                 "1.事業実施に至る背景・あるべき姿", "2.目的・対内対象者", "2.目的・対外対象者",
+                 "13.前年度（前回からの引き継ぎ事項）・予算面"):
+        assert name in fields
+    # 見出しの行そのもの（「■問題」）は項目にしない
+    assert "1.事業実施に至る背景" not in fields
+    # 小見出しと内容が同じセルにある項目は1つのまま
+    assert fields["6.事業内容(目的達成のための手法)"].text.startswith("■事業概要")
+    assert fields["4.実施日と実施前後のスケジュール"].text.startswith("■実施日")
+
+
+def test_business_plan_feedback_tables_are_named_by_meeting():
+    names = [f.name for f in committee_docs.extract_fields(PLAN)]
+    assert "五役会議①・意見1・内容" in names
+    assert "理事会①・対応1・質問者/回答者" in names
+    assert "五役会議②・意見6・内容" in names
+    assert not any(n.endswith("(2)") for n in names)  # 会議名で区別できるので番号は付かない
+
+
+def test_subheading_field_writes_into_the_content_row():
+    fields = {f.name: f for f in committee_docs.extract_fields(PLAN)}
+    problem = fields["1.事業実施に至る背景・問題"]
+    cause = fields["1.事業実施に至る背景・問題の原因"]
+    assert problem.start < cause.start  # 小見出しの次の行（内容）を指す
+    requests = committee_docs.build_requests(list(fields.values()),
+                                             {"1.事業実施に至る背景・問題": "会員が減っている"})
+    assert requests[-2]["insertText"] == {"location": {"index": problem.start},
+                                          "text": "会員が減っている"}
