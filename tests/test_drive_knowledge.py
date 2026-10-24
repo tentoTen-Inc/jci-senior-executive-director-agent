@@ -68,8 +68,8 @@ def test_access_and_scopes():
 def test_sync_updates_changed_and_removes_gone(drive_tree, monkeypatch):
     executed = []
     monkeypatch.setattr(drive_knowledge, "_known", lambda: {
-        "d_summary": "2026-10-23T04:10:45.668Z",  # 変わっていない
-        "d_old": "2026-01-01T00:00:00.000Z",  # ドライブから消えた
+        "d_summary": ("2026-10-23T04:10:45.668Z", "2027年度/04-委員会"),  # 変わっていない
+        "d_old": ("2026-01-01T00:00:00.000Z", "2027年度"),  # ドライブから消えた
     })
     monkeypatch.setattr(drive_knowledge, "_extract", lambda f, token: f"本文:{f['name']}")
     monkeypatch.setattr(lake_query, "execute",
@@ -77,7 +77,7 @@ def test_sync_updates_changed_and_removes_gone(drive_tree, monkeypatch):
 
     result = drive_knowledge.sync()
 
-    assert result == {"files": 2, "updated": 1, "pending": 0, "removed": 1}
+    assert result == {"files": 2, "updated": 1, "moved": 0, "pending": 0, "removed": 1}
     upserts = [p for s, p in executed if "MERGE" in s]
     assert len(upserts) == 1  # まとめて1回で書く
     assert upserts[0]["file_ids"] == ["d_budget"]
@@ -85,6 +85,26 @@ def test_sync_updates_changed_and_removes_gone(drive_tree, monkeypatch):
     assert upserts[0]["texts"] == ["本文:予算案"]
     deletes = [p for s, p in executed if s.startswith("DELETE")]
     assert deletes == [{"ids": ["d_old"]}]
+
+
+def test_sync_updates_path_of_moved_files(drive_tree, monkeypatch):
+    executed = []
+    monkeypatch.setattr(drive_knowledge, "_known", lambda: {
+        # 理事会から執行部へ移された（更新日時は同じ）
+        "d_budget": ("2026-10-22T00:00:00.000Z", "2027年度/03-理事会"),
+        "d_summary": ("2026-10-23T04:10:45.668Z", "2027年度/04-委員会"),
+    })
+    monkeypatch.setattr(drive_knowledge, "_extract",
+                        lambda f, token: pytest.fail("移動だけなら本文は取り直さない"))
+    monkeypatch.setattr(lake_query, "execute",
+                        lambda sql, params=None: executed.append((sql, params)) or 1)
+
+    result = drive_knowledge.sync()
+
+    assert result["moved"] == 1 and result["updated"] == 0
+    moves = [p for s, p in executed if s.lstrip().startswith("UPDATE")]
+    assert moves == [{"file_ids": ["d_budget"], "paths": ["2027年度/01-執行部"],
+                      "accesses": ["officers"]}]
 
 
 def test_sync_records_unreadable_files(drive_tree, monkeypatch):
