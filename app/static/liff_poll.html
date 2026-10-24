@@ -4,9 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>猪苗代専務AI</title>
-<!-- LIFF 画面: 日程調整（?poll=…, docs/schedule-poll-design.md）と LINE 連携（?link=1, docs/line-link-design.md）。
-     __LIFF_ID__ はサーバーが埋め込む -->
+<!-- LIFF 画面: 日程調整（?poll=…, docs/schedule-poll-design.md）と LINE 連携（?link=1, docs/line-link-design.md）、
+     メニューの画面（?view=…, docs/liff-menu-design.md。処理は /liff/views.js）。__LIFF_ID__ はサーバーが埋め込む -->
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script src="/liff/views.js"></script>
 <style>
   :root { --brand: #06c755; --ink: #1f2937; --sub: #6b7280; --line: #e5e7eb; --bg: #f7f7f8;
           --ok: #16a34a; --maybe: #d97706; --ng: #9ca3af; }
@@ -55,6 +56,14 @@
   .mark-ok { color: var(--ok); font-weight: 700; } .mark-maybe { color: var(--maybe); font-weight: 700; }
   .mark-ng { color: var(--ng); }
   .loading { color: var(--sub); text-align: center; padding: 48px 0; }
+  .choices.wide { margin-top: 10px; }
+  .choices.wide button { width: auto; flex: 1; font-size: 15px; }
+  .actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .actions button, .actions a { flex: 1; min-height: 42px; border-radius: 10px; font-size: 15px;
+                                border: 1px solid var(--line); background: #fff; color: var(--ink);
+                                text-align: center; text-decoration: none; display: inline-flex;
+                                align-items: center; justify-content: center; padding: 0 10px; }
+  .actions .primary { background: var(--brand); border-color: var(--brand); color: #fff; font-weight: 700; }
 </style>
 </head>
 <body>
@@ -279,6 +288,7 @@
       await liff.init({ liffId: LIFF_ID });
       if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
       if (param("link")) { await linkFlow(); return; }
+      if (param("view")) { await window.LiffViews.run(param("view"), { el, app, bar, btn, fail }); return; }
       pollId = findPollId();
       if (!pollId) { fail("日程調整が指定されていません。案内のボタンから開いてください。"); return; }
       state = await call("GET");
