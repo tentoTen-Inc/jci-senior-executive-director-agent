@@ -60,6 +60,7 @@ from .calendar_intent import ACTION_CAL, handle_calendar_postback
 from .calendar_sync import retry_pending
 from .delivery import execute_delivery
 from .deps import get_repo
+from .doc_edit_intent import ACTION_DOC, handle_doc_edit_postback
 from .gmail_import import import_gmail_notices
 from .invite import verify_and_link
 from .lake_api import router as lake_router
@@ -318,7 +319,7 @@ def handle_group_text_message(user_id: str | None, text: str) -> list[Message]:
         return [TextMessage(text=GROUP_UNLINKED_TEXT)]
     if not text:
         return [build_menu()]
-    return handle_member_text(repo, member, text, now=datetime.now())
+    return handle_member_text(repo, member, text, now=datetime.now(), in_group=True)
 
 
 def handle_event(event) -> None:
@@ -387,6 +388,8 @@ def handle_postback(user_id: str, data: str) -> list[Message]:
         return handle_member_text(repo, member, data, now=datetime.now())
     if data.startswith(f"{ACTION_CAL}|"):
         return handle_calendar_postback(repo, member, data, now=datetime.now())
+    if data.startswith(f"{ACTION_DOC}|"):
+        return handle_doc_edit_postback(repo, member, data, now=datetime.now())
     if data.startswith(f"{ai_feedback.ACTION_FEEDBACK}|"):
         return ai_feedback.handle_feedback_postback(member, data)
     if data.startswith(f"{ACTION_NOTICE_DONE}|"):

@@ -284,6 +284,25 @@ class PendingCalendarOp(BaseModel):
     status: str = "pending"  # pending | done | declined | expired
 
 
+class PendingDocEdit(BaseModel):
+    """LINE で確認待ちの委員会資料の更新（docs/committee-docs-edit-design.md §8）。
+
+    本人が「更新する」を押したときだけ書き込む。30分で失効する。
+    """
+
+    op_id: str
+    member_id: str
+    committee: str
+    doc_id: str
+    doc_title: str
+    revision_id: str
+    edits: dict[str, str] = Field(default_factory=dict)  # 項目名 → 新しい内容
+    summary: str | None = None
+    created_at: datetime
+    expires_at: datetime
+    status: str = "pending"  # pending | done | declined | expired
+
+
 class Attendance(BaseModel):
     event_id: str
     member_id: str
