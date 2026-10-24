@@ -157,11 +157,23 @@ WHEN NOT MATCHED THEN INSERT (file_id, title, path, mime_type, modified_at, acce
 """
 
 
-def _known() -> dict[str, str]:
+MOVE_SQL = """
+UPDATE {table} AS t
+SET path = s.path, access = s.access, synced_at = CURRENT_TIMESTAMP()
+FROM (
+  SELECT file_id, @paths[OFFSET(i)] AS path, @accesses[OFFSET(i)] AS access
+  FROM UNNEST(@file_ids) AS file_id WITH OFFSET i
+) AS s
+WHERE t.file_id = s.file_id
+"""
+
+
+def _known() -> dict[str, tuple[str, str]]:
+    """取込済みのファイルの（更新日時, 置き場所）。"""
     rows = lake_query.query(
-        f"SELECT file_id, FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%E3SZ', modified_at) AS m "
+        f"SELECT file_id, FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%E3SZ', modified_at) AS m, path "
         f"FROM {_table()}")
-    return {r["file_id"]: r["m"] for r in rows}
+    return {r["file_id"]: (r["m"], r["path"]) for r in rows}
 
 
 def _norm(ts: str) -> str:
@@ -178,7 +190,18 @@ def sync() -> dict | None:
         token = drive._token()
         files = [f for f in crawl(token) if not excluded(f["path"], f["name"])]
         known = _known()
-        changed = [f for f in files if known.get(f["id"]) != _norm(f["modifiedTime"])]
+        changed = [f for f in files
+                   if known.get(f["id"], ("", ""))[0] != _norm(f["modifiedTime"])]
+        # 移動・フォルダ名の変更では更新日時が変わらないので、置き場所だけ直す（本文は取り直さない）
+        moved = [f for f in files if f["id"] in known
+                 and known[f["id"]][0] == _norm(f["modifiedTime"])
+                 and known[f["id"]][1] != f["path"]]
+        if moved:
+            lake_query.execute(MOVE_SQL.format(table=_table()), {
+                "file_ids": [f["id"] for f in moved],
+                "paths": [f["path"] for f in moved],
+                "accesses": [access_for(f["path"]) for f in moved],
+            })
         rows: list[tuple[dict, str]] = []
         started = time.monotonic()
         for f in changed[:SYNC_BATCH]:
@@ -207,5 +230,6 @@ def sync() -> dict | None:
     except Exception as exc:  # noqa: BLE001 - tick 本体を止めない
         logger.warning("ドライブの取込に失敗: %s", exc)
         return {"error": "drive_sync_failed"}
-    return {"files": len(files), "updated": added, "pending": len(changed) - added,
+    return {"files": len(files), "updated": added, "moved": len(moved),
+            "pending": len(changed) - added,
             "removed": removed}
