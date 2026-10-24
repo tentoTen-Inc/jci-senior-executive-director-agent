@@ -29,3 +29,6 @@ web/dist/
 
 # 実データ（名簿など個人情報。コミットしない）
 data/
+
+# OAuth クライアントの鍵（scripts/gmail_oauth_setup.py で使う。中身は Secret Manager に登録済み）
+client_secret*.json
