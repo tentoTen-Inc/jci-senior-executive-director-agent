@@ -16,6 +16,7 @@ from . import schedule_poll as sp
 from .audit import write_audit
 from .deps import get_repo
 from .models import EventType, PollCandidate, PollStatus, SchedulePoll, TargetScope
+from .repository import Repository
 
 router = APIRouter(tags=["polls"])
 public_router = APIRouter(tags=["liff"])
@@ -63,9 +64,8 @@ class DecideIn(BaseModel):
     notify: bool = True  # グループへ決定を連絡する
 
 
-@router.post("/polls")
-def create_poll(payload: PollCreate,
-                x_goog_authenticated_user_email: str | None = Header(default=None)):
+def create(repo: Repository, payload: PollCreate, actor: str, now: datetime) -> SchedulePoll:
+    """日程調整を作る（管理画面と LIFF「日程調整を作る」で共通）。案内はまだ送らない。"""
     candidates = sorted(payload.candidates, key=lambda c: c.start)
     poll = SchedulePoll(
         poll_id=sp.new_poll_id(),
@@ -79,13 +79,19 @@ def create_poll(payload: PollCreate,
         target_scope=payload.target_scope,
         group_id=payload.group_id,
         deadline=payload.deadline,
-        created_at=datetime.now(),
-        created_by=_actor(x_goog_authenticated_user_email),
+        created_at=now,
+        created_by=actor,
     )
-    repo = get_repo()
     repo.save_poll(poll)
-    write_audit(repo, actor=poll.created_by or "unknown", action="poll.create",
-                   target=poll.poll_id, detail=poll.title)
+    write_audit(repo, actor=actor, action="poll.create", target=poll.poll_id, detail=poll.title)
+    return poll
+
+
+@router.post("/polls")
+def create_poll(payload: PollCreate,
+                x_goog_authenticated_user_email: str | None = Header(default=None)):
+    repo = get_repo()
+    poll = create(repo, payload, _actor(x_goog_authenticated_user_email), datetime.now())
     return sp.summary(repo, poll)
 
 
