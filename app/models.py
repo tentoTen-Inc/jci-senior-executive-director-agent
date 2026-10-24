@@ -169,6 +169,8 @@ class Member(BaseModel):
     committee_role: str | None = None  # 委員長/副委員長/委員
     committees: list[CommitteeSeat] = Field(default_factory=list)  # 兼務を含む全所属
     officer_role: str | None = None  # 理事長/専務理事/...
+    #: 副理事長が担当する委員会（席ではないので委員会あての出欠依頼の対象には入らない）
+    supervised_committees: list[str] = Field(default_factory=list)
     secondments: list[Secondment] = Field(default_factory=list)
     contact: Contact = Field(default_factory=Contact)
     line_user_id: str | None = None

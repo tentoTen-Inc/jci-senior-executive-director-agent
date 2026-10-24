@@ -23,6 +23,7 @@ class RosterEntry(BaseModel):
     member_type: MemberType = MemberType.regular
     officer_role: str | None = None
     committees: list[CommitteeSeat] = Field(default_factory=list)
+    supervised_committees: list[str] = Field(default_factory=list)  # 副理事長の担当委員会
     secondments: list[Secondment] = Field(default_factory=list)
 
 
@@ -57,6 +58,7 @@ def _apply(member: Member, entry: RosterEntry) -> list[str]:
         "committee": primary.committee if primary else None,
         "committee_role": primary.role if primary else None,
         "committees": entry.committees,
+        "supervised_committees": entry.supervised_committees,
         "secondments": entry.secondments,
     }
     if entry.kana:

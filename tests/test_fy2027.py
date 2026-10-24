@@ -64,6 +64,16 @@ def test_new_members_get_next_ids_and_primary_committee():
     assert genta.committee_names == {"組織未来推進委員会", "地域未来創造委員会"}
 
 
+def test_vice_president_supervised_committees_are_not_seats():
+    existing = [Member(member_id="m5", name="佐川 竜二", officer_role="副理事長")]
+    [change] = plan(existing, _entries({"name": "佐川 竜二", "officer_role": "副理事長",
+                                        "supervised_committees": ["地域未来創造委員会"]}))
+    assert change.fields == ["supervised_committees"]
+    assert change.member.supervised_committees == ["地域未来創造委員会"]
+    # 担当は席ではないので、委員会あての出欠依頼の対象（所属）には入らない
+    assert change.member.committee_names == set()
+
+
 def test_rerun_is_unchanged():
     existing = [Member(member_id="m2", name="遠藤 孝行", officer_role="専務理事")]
     [change] = plan(existing, _entries({"name": "遠藤孝行", "officer_role": "専務理事"}))
