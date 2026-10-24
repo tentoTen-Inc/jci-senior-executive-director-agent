@@ -42,6 +42,7 @@ REQUEST = "若手が自ら学ぶ総務委員会にしたいのでサマリーを
 def drive(monkeypatch):
     """ドライブ・ドキュメント・ナレッジ検索・AI をモックする。"""
     monkeypatch.setenv("COMMITTEE_DOCS_FOLDER", "root")
+    monkeypatch.setenv("DOC_EDIT_FROM_TEXT", "1")
     state = {"doc": json.loads(json.dumps(DOC)), "applied": [], "prompts": []}
     monkeypatch.setattr(committee_docs, "_token", lambda: "tok")
     monkeypatch.setattr(committee_docs, "committee_folders", lambda token: dict(FOLDERS))
@@ -268,3 +269,12 @@ def test_plan_of_other_committee_is_not_chosen(drive, monkeypatch):
     # 総務委員会の委員長は地域未来創造委員会の議案書を対象にしない（自分の委員会の資料から選ぶ）
     messages = try_doc_edit_intent(repo, CHAIR, APRIL, now=NOW)
     assert "4月例会の事業計画書" not in messages[0].text
+
+
+def test_paused_by_default(drive, monkeypatch):
+    from app.doc_edit_intent import PAUSED_TEXT
+    monkeypatch.delenv("DOC_EDIT_FROM_TEXT")
+    assert _ask(InMemoryRepository(), CHAIR)[0].text == PAUSED_TEXT
+    assert drive["prompts"] == [] and drive["applied"] == []
+    # 理事メンバー以外は従来どおり
+    assert _ask(InMemoryRepository(), VICE_CHAIR)[0].text == NOT_BOARD_TEXT

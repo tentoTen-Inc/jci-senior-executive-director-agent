@@ -57,6 +57,20 @@ NOT_BOARD_TEXT = (
 )
 RETRY_TEXT = "少し時間をおいて、もう一度お送りください。"
 DISABLED_TEXT = "資料の更新は、まだ準備中です。専務にお問い合わせください。"
+PAUSED_TEXT = (
+    "資料の更新は、操作方法を「資料を選んでから指示する」形に切り替えるため、一時停止しています。"
+    "再開までお待ちください。"
+)
+
+
+def from_text_enabled() -> bool:
+    """文の単語で資料の更新を受け付けるか。
+
+    誤判定（別の資料の更新・質問扱い）があったため既定は停止。DOC_EDIT_FROM_TEXT=1 で再開する。
+    """
+    import os
+
+    return os.environ.get("DOC_EDIT_FROM_TEXT", "").strip() == "1"
 NO_COMMITTEE_TEXT = "更新できる委員会の資料が見つかりませんでした。"
 FAILED_TEXT = "資料の読み込みに失敗しました。少し時間をおいて、もう一度お送りください。"
 CONFLICT_TEXT = (
@@ -180,6 +194,8 @@ def try_doc_edit_intent(
         return None
     if not committee_docs.is_board_member(member):
         return [TextMessage(text=NOT_BOARD_TEXT)]
+    if not from_text_enabled():
+        return [TextMessage(text=PAUSED_TEXT)]
     if in_group:
         return [TextMessage(text=GROUP_TEXT)]
     if not committee_docs.is_enabled():
