@@ -303,6 +303,22 @@ class PendingDocEdit(BaseModel):
     status: str = "pending"  # pending | done | declined | expired
 
 
+class PendingProposalCreate(BaseModel):
+    """LINE で確認待ちの議案（事業計画書）の作成（docs/proposal-ledger-design.md §6）。"""
+
+    op_id: str
+    member_id: str
+    committee: str
+    event_id: str
+    event_start: datetime
+    title: str  # 「3月例会」
+    folder_name: str  # 「2703_3月例会」
+    doc_name: str  # 「【計画書】3月例会事業計画書」
+    created_at: datetime
+    expires_at: datetime
+    status: str = "pending"  # pending | done | declined | expired
+
+
 class Attendance(BaseModel):
     event_id: str
     member_id: str

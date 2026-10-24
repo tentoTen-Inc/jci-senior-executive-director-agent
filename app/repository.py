@@ -29,6 +29,7 @@ from .models import (
     NoticeAction,
     PendingCalendarOp,
     PendingDocEdit,
+    PendingProposalCreate,
     PollResponse,
     Proposal,
     ReminderPolicy,
@@ -76,6 +77,8 @@ class Repository(Protocol):
     def get_calendar_op(self, op_id: str) -> PendingCalendarOp | None: ...
     def save_doc_edit(self, op: PendingDocEdit) -> None: ...
     def get_doc_edit(self, op_id: str) -> PendingDocEdit | None: ...
+    def save_proposal_create(self, op: PendingProposalCreate) -> None: ...
+    def get_proposal_create(self, op_id: str) -> PendingProposalCreate | None: ...
     def save_line_group(self, group: LineGroup) -> None: ...
     def get_line_group(self, group_id: str) -> LineGroup | None: ...
     def list_line_groups(self) -> list[LineGroup]: ...
@@ -157,6 +160,7 @@ class InMemoryRepository:
         self._gcal_sync: CalendarSyncState = CalendarSyncState()
         self._calendar_ops: dict[str, PendingCalendarOp] = {}
         self._doc_edits: dict[str, PendingDocEdit] = {}
+        self._proposal_creates: dict[str, PendingProposalCreate] = {}
         self._line_groups: dict[str, LineGroup] = {}
         self._jobs: dict[str, DeliveryJob] = {}
         self._logs: list[DeliveryLog] = []
@@ -274,6 +278,13 @@ class InMemoryRepository:
 
     def get_doc_edit(self, op_id: str) -> PendingDocEdit | None:
         op = self._doc_edits.get(op_id)
+        return op.model_copy(deep=True) if op else None
+
+    def save_proposal_create(self, op: PendingProposalCreate) -> None:
+        self._proposal_creates[op.op_id] = op.model_copy(deep=True)
+
+    def get_proposal_create(self, op_id: str) -> PendingProposalCreate | None:
+        op = self._proposal_creates.get(op_id)
         return op.model_copy(deep=True) if op else None
 
     def save_line_group(self, group: LineGroup) -> None:

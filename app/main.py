@@ -76,6 +76,7 @@ from .notice_actions import ACTION_NOTICE_DONE, handle_done_postback
 from .notices_api import router as notices_router
 from .polls_api import public_router as liff_router
 from .polls_api import router as polls_router
+from .proposal_intent import ACTION_CREATE, handle_proposal_create_postback
 from .proposals_api import router as proposals_router
 from .reminders import plan_reminders
 from .surveys_api import router as surveys_router
@@ -391,6 +392,8 @@ def handle_postback(user_id: str, data: str) -> list[Message]:
         return handle_calendar_postback(repo, member, data, now=datetime.now())
     if data.startswith(f"{ACTION_DOC}|"):
         return handle_doc_edit_postback(repo, member, data, now=datetime.now())
+    if data.startswith(f"{ACTION_CREATE}|"):
+        return handle_proposal_create_postback(repo, member, data, now=datetime.now())
     if data.startswith(f"{ai_feedback.ACTION_FEEDBACK}|"):
         return ai_feedback.handle_feedback_postback(member, data)
     if data.startswith(f"{ACTION_NOTICE_DONE}|"):

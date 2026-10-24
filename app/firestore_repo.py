@@ -28,6 +28,7 @@ from .models import (
     NoticeAction,
     PendingCalendarOp,
     PendingDocEdit,
+    PendingProposalCreate,
     PollResponse,
     Proposal,
     ReminderPolicy,
@@ -47,6 +48,7 @@ COL_POLICIES = "reminderPolicies"
 COL_SETTINGS = "settings"
 COL_CALENDAR_OPS = "calendarOps"
 COL_DOC_EDITS = "pendingDocEdits"
+COL_PROPOSAL_CREATES = "pendingProposalCreates"
 COL_LINE_GROUPS = "lineGroups"
 COL_JOBS = "deliveryJobs"
 COL_LOGS = "deliveryLogs"
@@ -192,6 +194,14 @@ class FirestoreRepository:
     def get_doc_edit(self, op_id: str) -> PendingDocEdit | None:
         snap = self._db.collection(COL_DOC_EDITS).document(op_id).get()
         return PendingDocEdit.model_validate(snap.to_dict()) if snap.exists else None
+
+    def save_proposal_create(self, op: PendingProposalCreate) -> None:
+        self._db.collection(COL_PROPOSAL_CREATES).document(op.op_id).set(
+            op.model_dump(mode="json"))
+
+    def get_proposal_create(self, op_id: str) -> PendingProposalCreate | None:
+        snap = self._db.collection(COL_PROPOSAL_CREATES).document(op_id).get()
+        return PendingProposalCreate.model_validate(snap.to_dict()) if snap.exists else None
 
     def save_line_group(self, group: LineGroup) -> None:
         self._db.collection(COL_LINE_GROUPS).document(group.group_id).set(
