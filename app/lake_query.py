@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from . import config, lake
@@ -99,26 +101,51 @@ def to_records(res: dict) -> list[dict]:
     ]
 
 
-def _run(sql: str, params: dict | None) -> dict:
+def _get_results(job_id: str, location: str, timeout_ms: int) -> dict:
+    """jobs.getQueryResults で完了を待つ（テストでモックする境界）。"""
+    params = urllib.parse.urlencode({"location": location, "timeoutMs": timeout_ms,
+                                     "maxResults": 0})
+    req = urllib.request.Request(
+        f"https://bigquery.googleapis.com/bigquery/v2/projects/{config.PROJECT_ID}"
+        f"/queries/{job_id}?{params}")
+    req.add_header("Authorization", f"Bearer {lake._token()}")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_ms / 1000 + 15) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        raise QueryError(f"{exc.code}: {_error_message(exc.read())}") from exc
+    except urllib.error.URLError as exc:
+        raise QueryError(str(exc.reason)) from exc
+
+
+def _run(sql: str, params: dict | None, timeout_ms: int = TIMEOUT_MS) -> dict:
+    location = os.environ.get("LAKE_LOCATION", "asia-northeast1")
     body = {
         "query": sql,
         "useLegacySql": False,
-        "location": os.environ.get("LAKE_LOCATION", "asia-northeast1"),
-        "timeoutMs": TIMEOUT_MS,
+        "location": location,
+        "timeoutMs": min(timeout_ms, TIMEOUT_MS),
         "parameterMode": "NAMED",
         "queryParameters": [_param(k, v) for k, v in (params or {}).items()],
     }
     res = _post(body)
+    # 長いクエリ（ベクトル化の INSERT 等）は、指定の時間まで完了を待ち続ける。
+    # 待たずに打ち切ると、BigQuery 側では処理が続いたまま後続の処理だけが飛ばされる。
+    deadline = time.monotonic() + timeout_ms / 1000
+    job_id = (res.get("jobReference") or {}).get("jobId")
+    while not res.get("jobComplete", False) and job_id and time.monotonic() < deadline:
+        wait = int(max(1, min(TIMEOUT_MS / 1000, deadline - time.monotonic())) * 1000)
+        res = {**res, **_get_results(job_id, location, wait)}
     if not res.get("jobComplete", False):
         raise QueryError("クエリが時間内に終わりませんでした。")
     return res
 
 
-def query(sql: str, params: dict | None = None) -> list[dict]:
+def query(sql: str, params: dict | None = None, *, timeout_ms: int = TIMEOUT_MS) -> list[dict]:
     """クエリを実行して行を返す。完了しなかった・失敗したら QueryError。"""
-    return to_records(_run(sql, params))
+    return to_records(_run(sql, params, timeout_ms))
 
 
-def execute(sql: str, params: dict | None = None) -> int:
+def execute(sql: str, params: dict | None = None, *, timeout_ms: int = TIMEOUT_MS) -> int:
     """DML（INSERT/UPDATE/DELETE）を実行し、変更した行数を返す。"""
-    return int(_run(sql, params).get("numDmlAffectedRows", 0) or 0)
+    return int(_run(sql, params, timeout_ms).get("numDmlAffectedRows", 0) or 0)

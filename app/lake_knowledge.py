@@ -173,17 +173,38 @@ def _drive_cleanup() -> str:
            AND d.access = scope_id AND CHAR_LENGTH(COALESCE(d.text, '')) > 0))"""
 
 
+#: ベクトル化の INSERT を待つ時間。件数に関係なく 50〜60 秒かかる（2026-10-25 計測）ので余裕を持つ
+INDEX_TIMEOUT_MS = 120_000
+
+
+def pending_count_sql() -> str:
+    return f"SELECT COUNT(*) AS n FROM ({candidate_chunks_sql()})"
+
+
 def index_knowledge() -> dict | None:
-    """未索引の断片をベクトル化して追加し、送信取消分を消す（tick から呼ぶ）。"""
+    """送信取消・古い版の断片を消し、未索引の断片をベクトル化して追加する（tick から呼ぶ）。
+
+    片付け（cleanup）は索引とは別に先に行う。以前は索引の INSERT が時間切れになると片付けまで
+    飛ばされ、送信取消・公開範囲が変わった資料の断片が検索に残り続けた。
+    ベクトル化は件数が0でも約50秒かかるので、未索引の断片があるときだけ行う。
+    """
     if not is_enabled():
         return None
+    result: dict = {}
     try:
-        added = lake_query.execute(index_sql())
-        removed = lake_query.execute(cleanup_sql())
+        result["removed"] = lake_query.execute(cleanup_sql())
+    except Exception as exc:  # noqa: BLE001 - tick 本体を止めない
+        logger.warning("ナレッジの片付けに失敗: %s", exc)
+        result["error"] = "cleanup_failed"
+    try:
+        rows = lake_query.query(pending_count_sql())
+        pending = int(rows[0]["n"]) if rows else 0
+        result["indexed"] = (lake_query.execute(index_sql(), timeout_ms=INDEX_TIMEOUT_MS)
+                             if pending else 0)
     except Exception as exc:  # noqa: BLE001 - tick 本体を止めない
         logger.warning("ナレッジ索引に失敗: %s", exc)
-        return {"error": "index_failed"}
-    return {"indexed": added, "removed": removed}
+        result["error"] = "index_failed"
+    return result
 
 
 # --------------------------------------------------------------------------- #

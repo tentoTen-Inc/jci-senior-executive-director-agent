@@ -73,18 +73,48 @@ def test_search_sql_scopes_to_what_user_can_see(enabled):
     assert sql.index("scope_id = @user_id") < sql.index("WHERE distance")
 
 
-def test_index_knowledge_reports_counts(enabled, monkeypatch):
-    results = iter([3, 1])
-    monkeypatch.setattr(lake_query, "execute", lambda sql, params=None: next(results))
-    assert lake_knowledge.index_knowledge() == {"indexed": 3, "removed": 1}
+def _fake_lake(monkeypatch, *, pending=3, fail=()):
+    """execute / query を差し替え、呼ばれた順に (種類, timeout_ms) を記録する。"""
+    calls = []
+
+    def execute(sql, params=None, *, timeout_ms=lake_query.TIMEOUT_MS):
+        kind = "cleanup" if sql.startswith("DELETE") else "index"
+        calls.append((kind, timeout_ms))
+        if kind in fail:
+            raise lake_query.QueryError("クエリが時間内に終わりませんでした。")
+        return 1 if kind == "cleanup" else pending
+
+    def query(sql, params=None, *, timeout_ms=lake_query.TIMEOUT_MS):
+        calls.append(("count", timeout_ms))
+        return [{"n": pending}]
+
+    monkeypatch.setattr(lake_query, "execute", execute)
+    monkeypatch.setattr(lake_query, "query", query)
+    return calls
 
 
-def test_index_failure_does_not_raise(enabled, monkeypatch):
-    def boom(sql, params=None):
-        raise lake_query.QueryError("403: connection denied")
+def test_index_knowledge_cleans_up_first_and_waits_for_embedding(enabled, monkeypatch):
+    calls = _fake_lake(monkeypatch)
+    assert lake_knowledge.index_knowledge() == {"removed": 1, "indexed": 3}
+    assert [c[0] for c in calls] == ["cleanup", "count", "index"]
+    assert calls[-1][1] == lake_knowledge.INDEX_TIMEOUT_MS  # ベクトル化は長めに待つ
 
-    monkeypatch.setattr(lake_query, "execute", boom)
-    assert lake_knowledge.index_knowledge() == {"error": "index_failed"}
+
+def test_index_knowledge_skips_embedding_when_nothing_pending(enabled, monkeypatch):
+    calls = _fake_lake(monkeypatch, pending=0)
+    assert lake_knowledge.index_knowledge() == {"removed": 1, "indexed": 0}
+    assert "index" not in [c[0] for c in calls]
+
+
+def test_cleanup_runs_even_if_index_times_out(enabled, monkeypatch):
+    calls = _fake_lake(monkeypatch, fail=("index",))
+    assert lake_knowledge.index_knowledge() == {"removed": 1, "error": "index_failed"}
+    assert calls[0][0] == "cleanup"
+
+
+def test_index_runs_even_if_cleanup_fails(enabled, monkeypatch):
+    _fake_lake(monkeypatch, fail=("cleanup",))
+    assert lake_knowledge.index_knowledge() == {"error": "cleanup_failed", "indexed": 3}
 
 
 def test_search_passes_parameters(enabled, monkeypatch):
@@ -228,3 +258,26 @@ def test_tick_runs_knowledge_index(monkeypatch):
     # ドライブの取込は DRIVE_KNOWLEDGE_FOLDERS 未設定なので None
     assert res.json()["lake"] == {"redact": None, "drive": None,
                                   "knowledge": {"indexed": 2, "removed": 0}}
+
+
+def test_execute_waits_until_long_job_completes(monkeypatch):
+    """jobs.query の待ち時間内に終わらない DML は、getQueryResults で完了を待つ。"""
+    monkeypatch.setattr(lake_query, "_post", lambda body: {
+        "jobComplete": False, "jobReference": {"jobId": "job_1"}})
+    polls = []
+
+    def results(job_id, location, timeout_ms):
+        polls.append(job_id)
+        return {"jobComplete": len(polls) >= 2, "numDmlAffectedRows": "7"}
+
+    monkeypatch.setattr(lake_query, "_get_results", results)
+    assert lake_query.execute("INSERT ...", timeout_ms=120_000) == 7
+    assert polls == ["job_1", "job_1"]
+
+
+def test_execute_gives_up_after_timeout(monkeypatch):
+    monkeypatch.setattr(lake_query, "_post", lambda body: {
+        "jobComplete": False, "jobReference": {"jobId": "job_1"}})
+    monkeypatch.setattr(lake_query, "_get_results", lambda *a: {"jobComplete": False})
+    with pytest.raises(lake_query.QueryError):
+        lake_query.execute("INSERT ...", timeout_ms=0)
