@@ -156,3 +156,47 @@ def test_cancel_scheduled_post(repo, pushed):
 def test_liff_link_page(repo):
     res = public.get("/liff/poll?link=1")
     assert res.status_code == 200 and "linkFlow" in res.text
+
+
+def _poll_with_answers(repo):
+    from app.models import PollCandidate, TargetScope, TargetScopeKind
+    repo.save_poll(SchedulePoll(
+        poll_id="p2", title="第2回五役予定者会議", event_type="五役会", group_id="Cgroup",
+        target_scope=TargetScope(kind=TargetScopeKind.custom, value=["m2", "m7"]),
+        candidates=[PollCandidate(candidate_id="c1", start=datetime(2026, 11, 5, 19)),
+                    PollCandidate(candidate_id="c2", start=datetime(2026, 11, 6, 19))]))
+    repo.save_poll_response(PollResponse(poll_id="p2", line_user_id="U_sed", member_id="m2",
+                                         answers={"c1": PollAnswer.ok, "c2": PollAnswer.ok}))
+
+
+def test_scheduled_poll_remind_is_sent_by_tick(repo, pushed, monkeypatch):
+    _poll_with_answers(repo)
+    res = admin.post("/api/scheduled-posts", json={
+        "group_id": "Cgroup", "kind": "poll_remind", "poll_id": "p2",
+        "send_at": "2026-10-27T08:00:00"})
+    assert res.status_code == 200
+    assert line_link.send_due_posts(repo, datetime(2026, 10, 27, 7, 59)) is None
+    [result] = line_link.send_due_posts(repo, datetime(2026, 10, 27, 8, 0, 5))
+    assert result["result"] == "sent"
+    (to, msgs), = pushed
+    assert to == "Cgroup" and "宮澤 重嗣さん" in msgs[0].text  # 未回答の人だけ
+    assert "遠藤 孝行" not in msgs[0].text
+
+
+def test_scheduled_poll_decide_registers_event_and_notifies(repo, pushed, monkeypatch):
+    _poll_with_answers(repo)
+    monkeypatch.setattr(sp, "push_event", lambda repo, event: event)
+    assert admin.post("/api/scheduled-posts", json={
+        "group_id": "Cgroup", "kind": "poll_decide", "poll_id": "p2", "candidate_id": "c9",
+        "send_at": "2026-10-27T08:00:00"}).status_code == 400  # 候補日が無い
+    admin.post("/api/scheduled-posts", json={
+        "group_id": "Cgroup", "kind": "poll_decide", "poll_id": "p2", "candidate_id": "c2",
+        "send_at": "2026-10-27T08:00:00"})
+    [result] = line_link.send_due_posts(repo, datetime(2026, 10, 27, 8, 0, 5))
+    assert result["result"] == "sent"
+    poll = repo.get_poll("p2")
+    assert poll.status == "decided" and poll.decided_candidate_id == "c2"
+    event = repo.get_event(poll.event_id)
+    assert event.datetime_start == datetime(2026, 11, 6, 19)
+    (to, msgs), = pushed
+    assert to == "Cgroup" and "【日程決定】" in msgs[0].text and "11月6日(金)" in msgs[0].text

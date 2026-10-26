@@ -279,11 +279,17 @@ def send_due_posts(repo: Repository, now: datetime) -> list[dict] | None:
                     raise sp.PollError(400, "LIFF が未設定です。")
                 if not line_push.push_messages(post.group_id, [link_invite_message()]):
                     raise sp.PollError(503, "LINE のアクセストークンが未設定です。")
-            elif post.kind == "poll_announce":
+            elif post.kind in ("poll_announce", "poll_remind", "poll_decide"):
                 poll = repo.get_poll(post.poll_id or "")
                 if poll is None:
                     raise sp.PollError(404, "日程調整が見つかりません。")
-                sp.announce(repo, poll, "scheduled", now)
+                if post.kind == "poll_announce":
+                    sp.announce(repo, poll, "scheduled", now)
+                elif post.kind == "poll_remind":
+                    sp.remind(repo, poll, "scheduled", now)
+                else:
+                    # 確定すると予定（下書き）を作ってカレンダーへ登録し、グループへ決定を連絡する
+                    sp.decide(repo, poll, post.candidate_id or "", "scheduled", now)
             else:
                 raise sp.PollError(400, f"未知の種類: {post.kind}")
             post = post.model_copy(update={"status": ScheduledPostStatus.sent, "sent_at": now})

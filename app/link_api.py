@@ -65,8 +65,9 @@ def reject_link(line_user_id: str,
 
 class PostCreate(BaseModel):
     group_id: str = Field(min_length=1)
-    kind: str = Field(pattern="^(link_invite|poll_announce)$")
+    kind: str = Field(pattern="^(link_invite|poll_announce|poll_remind|poll_decide)$")
     poll_id: str | None = None
+    candidate_id: str | None = None  # kind=poll_decide のとき
     send_at: datetime
 
 
@@ -79,8 +80,12 @@ def scheduled_posts():
 def create_scheduled_post(payload: PostCreate,
                           x_goog_authenticated_user_email: str | None = Header(default=None)):
     repo = get_repo()
-    if payload.kind == "poll_announce" and not repo.get_poll(payload.poll_id or ""):
-        raise HTTPException(status_code=400, detail="日程調整が見つかりません。")
+    if payload.kind.startswith("poll_"):
+        poll = repo.get_poll(payload.poll_id or "")
+        if poll is None:
+            raise HTTPException(status_code=400, detail="日程調整が見つかりません。")
+        if payload.kind == "poll_decide" and poll.candidate(payload.candidate_id or "") is None:
+            raise HTTPException(status_code=400, detail="確定する候補日が見つかりません。")
     post = ScheduledPost(post_id=line_link.new_post_id(), created_at=datetime.now(),
                          created_by=_actor(x_goog_authenticated_user_email),
                          **payload.model_dump())
