@@ -22,7 +22,7 @@ from .models import (
     SedApproval,
 )
 from .proposal_matrix import build_proposal_matrix
-from .proposal_submit import meeting_label
+from .proposal_submit import meeting_label, plan_label
 from .proposal_sync import blank_count
 
 router = APIRouter(tags=["proposals"])
@@ -59,9 +59,10 @@ class ProposalUpdate(BaseModel):
 
 
 def _out(repo, p: Proposal) -> dict:
-    """画面用: 上程先の会議の表示（日程調整中なら「〇〇（日程調整中）」）と空欄の数を添える。"""
+    """画面用: 上程先の会議（日程調整中なら「〇〇（日程調整中）」）・空欄の数・提出予定日。"""
     return {**p.model_dump(mode="json"), "meeting_label": meeting_label(repo, p),
-            "blank_count": blank_count(p) if p.sections else None}
+            "blank_count": blank_count(p) if p.sections else None,
+            "submit_plan_label": plan_label(p)}
 
 
 @router.get("/proposals")
@@ -130,6 +131,7 @@ def create_proposal(
         proposal_id=f"prop_{uuid.uuid4().hex[:10]}",
         **payload.model_dump(),
         history=[ProposalHistory(at=now, stage=payload.stage, by=actor)],
+        submit_deadline_set_at=now if payload.deadlines.submit else None,
     )
     repo.upsert_proposal(proposal)
     write_audit(
@@ -150,6 +152,9 @@ def update_proposal(proposal_id: str, payload: ProposalUpdate):
         raise HTTPException(status_code=404, detail="proposal not found")
     # model_dump はネストしたモデル(deadlines)を dict に落としてしまうため属性から取る
     data = {name: getattr(payload, name) for name in payload.model_fields_set}
+    if payload.deadlines is not None and payload.deadlines.submit != p.deadlines.submit:
+        # 未提出の知らせは、締切を設定した後に過ぎた締切だけを対象にする（§10.5）
+        data["submit_deadline_set_at"] = datetime.now()
     updated = p.model_copy(update=data)
     repo.upsert_proposal(updated)
     return updated

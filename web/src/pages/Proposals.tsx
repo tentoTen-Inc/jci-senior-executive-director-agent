@@ -50,6 +50,7 @@ type Proposal = {
   meeting_label?: string | null;
   meeting_poll_id?: string | null;
   blank_count?: number | null;
+  submit_plan_label?: string | null; // 締切を過ぎた未提出の議案の提出予定日（担当副理事長が LINE で答えた）
 };
 const SUMMARY_TYPE = "年間計画（サマリー）";
 
@@ -424,6 +425,7 @@ function KanbanCard({ p, active, onClick }: { p: Proposal; active: boolean; onCl
         {[p.number, p.committee].filter(Boolean).join("・") || "委員会未設定"}
       </div>
       {p.meeting_label && <div className="mt-0.5 truncate text-xs text-ink-sub">上程先: {p.meeting_label}</div>}
+      {p.submit_plan_label && <div className="mt-0.5 truncate text-xs font-bold text-hold">提出予定: {p.submit_plan_label}</div>}
       <div className="mt-2 flex flex-wrap gap-1">
         <DeadlineBadge p={p} />
         {p.sed_approval?.status !== "pending" && <Badge tone={ap.tone}>{ap.label}</Badge>}
@@ -574,6 +576,12 @@ function Detail({
           )}
         </div>
         {p.meeting_label && <div className="mt-1 text-sm">上程先: <span className="font-bold">{p.meeting_label}</span></div>}
+        {p.submit_plan_label && (
+          <div className="mt-1 text-sm">
+            提出予定: <span className="font-bold text-hold">{p.submit_plan_label}</span>
+            <span className="ml-2 text-xs text-ink-sub">（締切を過ぎたため LINE で回答）</span>
+          </div>
+        )}
         {url && (
           <a href={url} target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-bold text-line-ink hover:underline">
             議案書を開く（Google ドキュメント）

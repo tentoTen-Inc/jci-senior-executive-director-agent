@@ -41,14 +41,18 @@ def _repo():
                                                        credentials=Credentials(token)))
 
 
-def plan(repo, deadline: datetime, poll_id: str) -> list:
+def plan(repo, deadline: datetime, poll_id: str, now: datetime | None = None) -> list:
     """設定する議案（変更後の値）の一覧。上程先の日程調整が無ければ止める。"""
     if repo.get_poll(poll_id) is None:
         raise SystemExit(f"日程調整 {poll_id} が見つかりません。")
+    now = now or datetime.now()
     targets = [p for p in repo.list_proposals(status="open") if p.doc_type == SUMMARY_TYPE]
     return [p.model_copy(update={
         "deadlines": p.deadlines.model_copy(update={"submit": deadline}),
         "meeting_poll_id": poll_id,
+        # 締切を変えたときだけ記録（未提出の知らせは、設定後に過ぎた締切だけが対象）
+        "submit_deadline_set_at": (now if p.deadlines.submit != deadline
+                                   else p.submit_deadline_set_at),
     }) for p in targets]
 
 

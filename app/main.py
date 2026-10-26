@@ -359,7 +359,8 @@ def handle_event(event) -> None:
         user_id = event.source.user_id
         data = event.postback.data
         logger.info("postback event: userId=%s data=%s", user_id, data)
-        messages = handle_postback(user_id, data)
+        params = getattr(event.postback, "params", None)  # datetimepicker で選んだ日付など
+        messages = handle_postback(user_id, data, params)
         if messages:
             reply_messages(event.reply_token, messages)
     else:
@@ -393,7 +394,7 @@ def dispatch_event(event, *, fail_open: bool) -> bool:
     return True
 
 
-def handle_postback(user_id: str, data: str) -> list[Message]:
+def handle_postback(user_id: str, data: str, params: dict | None = None) -> list[Message]:
     """postback（出欠ボタン・メニュー）を処理してメッセージ列を返す。"""
     # リッチメニューのタブ切り替え（richmenuswitch）。LINE 側で切り替わるので返事はしない
     if data.startswith("tab:"):
@@ -421,6 +422,8 @@ def handle_postback(user_id: str, data: str) -> list[Message]:
         return handle_done_postback(repo, member.member_id, data)
     if data.startswith(f"{line_link.ACTION_LINK}|"):
         return line_link.handle_postback(repo, member, data, now=datetime.now())
+    if data.startswith(f"{proposal_submit.ACTION_PLAN}|"):
+        return proposal_submit.handle_plan_postback(repo, member, data, params, datetime.now())
     return apply_postback(repo, member, data, now=datetime.now())
 
 

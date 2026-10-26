@@ -132,6 +132,7 @@
             el("div", { class: "meta" }, `${p.committee}｜${p.stage}${p.event_date ? `｜実施 ${p.event_date}` : ""}`),
             el("h2", {}, p.title),
             p.meeting ? el("div", { class: "hint" }, `上程先: ${p.meeting}`) : null,
+            p.plan ? el("div", { class: "hint" }, `提出予定: ${p.plan}`) : null,
             p.deadlines.length ? el("div", { class: "hint" }, p.deadlines.map((d) => `${d.label}〆 ${d.at}`).join("　")) : null,
             p.blanks !== null && p.blanks !== undefined ? el("div", { class: "hint" }, p.blanks ? `空欄 ${p.blanks} 欄` : "すべての欄が記入済みです") : null,
             feedback,

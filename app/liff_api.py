@@ -238,6 +238,7 @@ def proposals_view(repo: Repository, member: Member) -> dict:
             "blanks": proposal_sync.blank_count(p) if p.sections else None,
             "can_submit": proposal_submit.can_submit(member, p),
             "can_withdraw": proposal_submit.can_withdraw(member, p),
+            "plan": proposal_submit.plan_label(p),
         })
     return {"proposals": rows, "work_enabled": committee_docs.is_enabled()}
 

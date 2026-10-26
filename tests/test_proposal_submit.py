@@ -23,6 +23,7 @@ from app.models import (
     ProposalDeadlines,
     ProposalStage,
     SchedulePoll,
+    SubmitPlan,
 )
 from app.repository import InMemoryRepository
 from tests.conftest import ADMIN_AUTH
@@ -37,11 +38,26 @@ SECTIONS = {"スローガン": "つなぐ", "現状分析": "", "目指すべき
             "事業手法": "書いた", "例会/事業・1月": ""}
 
 
+class Sent(list):
+    """送った (宛先, 文) の一覧。raw に送ったメッセージそのもの（Flex を確かめる）。"""
+
+    def __init__(self):
+        super().__init__()
+        self.raw = []
+        self.fail = set()  # 送れない宛先（友だち未追加など）
+
+
 @pytest.fixture
 def pushed(monkeypatch):
-    sent = []
-    monkeypatch.setattr(line_push, "push_messages",
-                        lambda to, msgs: sent.append((to, msgs[0].text)) or True)
+    sent = Sent()
+
+    def push(to, msgs):
+        if to in sent.fail:
+            raise RuntimeError("not a friend")
+        sent.append((to, getattr(msgs[0], "text", None) or msgs[0].alt_text))
+        sent.raw.append((to, msgs[0]))
+        return True
+    monkeypatch.setattr(line_push, "push_messages", push)
     return sent
 
 
@@ -244,6 +260,7 @@ def test_script_sets_deadline_and_meeting_only_with_apply(repo, capsys):
     for pid in ("ps1", "ps2"):
         p = repo.get_proposal(pid)
         assert (p.deadlines.submit, p.meeting_poll_id) == (DEADLINE, "poll_08649098fc")
+        assert p.submit_deadline_set_at is not None  # 未提出の知らせの対象になる
     assert repo.get_proposal("plan").deadlines.submit is None  # 事業計画書は触らない
 
 
@@ -258,3 +275,138 @@ class _Clock:
 
     def __getattr__(self, name):
         return getattr(datetime, name)
+
+
+# --------------------------------------------------------------------------- #
+# 未提出: 担当副理事長に提出予定日を聞く（§10.5）
+# --------------------------------------------------------------------------- #
+SET_AT = datetime(2026, 10, 27, 10, 0)  # 締切を設定した時刻（締切より前）
+AFTER = DEADLINE + timedelta(hours=8, minutes=10)  # 11/1 08:09
+
+
+def _arm(repo, set_at=SET_AT):
+    for p in repo.list_proposals():
+        repo.upsert_proposal(p.model_copy(update={"submit_deadline_set_at": set_at}))
+
+
+def test_overdue_alert_goes_to_supervising_vp_with_date_picker(repo, pushed):
+    _arm(repo)
+    result = proposal_submit.process(repo, AFTER)
+    assert result["overdue"] == 2
+    to = {t for t, _ in pushed}
+    assert {"U_vp", "U_sed"} <= to  # 地域未来創造委員会は担当副理事長がいないので専務へ
+    flex = dict(pushed.raw)["U_vp"]
+    assert flex.alt_text.startswith(
+        "【未提出】総務委員会 年間計画（サマリー）の提出締切（10月31日(土) 23:59）を過ぎています")
+    button = flex.contents.footer.contents[0].action
+    assert (button.type, button.data, button.mode) == ("datetimepicker", "psp|ps1", "date")
+    assert button.min == "2026-11-01"
+    digest = next(text for t, text in pushed if text.startswith("【提出締切】"))
+    assert "担当副理事長への連絡: 副理事長 次郎さんに送信済み" in digest
+    pushed.clear()
+    assert proposal_submit.process(repo, AFTER + timedelta(hours=1))["overdue"] == 0
+    assert pushed == []
+
+
+@pytest.mark.parametrize("set_at", [None, DEADLINE + timedelta(hours=1)])
+def test_no_alert_without_deadline_set_before_it_passed(repo, pushed, set_at):
+    _arm(repo, set_at)  # 締切の設定時刻が無い・締切を過ぎてから設定した（古いデータ）
+    assert proposal_submit.process(repo, AFTER)["overdue"] == 0
+    assert not any(t == "U_vp" for t, _ in pushed)
+
+
+def test_no_alert_at_night_or_after_submission(repo, pushed):
+    _arm(repo)
+    assert proposal_submit.process(repo, DEADLINE + timedelta(hours=1))["overdue"] == 0
+    proposal_submit.submit(repo, repo.get_member("m_chair"), "ps1", MORNING)
+    pushed.clear()
+    proposal_submit.process(repo, AFTER)
+    assert not any(t == "U_vp" for t, _ in pushed)  # 提出済みには聞かない
+
+
+def test_unreachable_vp_is_reported_to_sed(repo, pushed):
+    _arm(repo)
+    pushed.fail.add("U_vp")
+    proposal_submit.process(repo, AFTER)
+    texts = [text for t, text in pushed if t == "U_sed"]
+    assert any(t.startswith("【未提出】総務委員会: 副理事長 次郎さんに LINE で連絡できないため")
+               for t in texts)
+    assert "副理事長 次郎さんに連絡できず" in next(t for t in texts if t.startswith("【提出締切】"))
+    [alert] = repo.get_proposal("ps1").alerts
+    assert (alert.member_id, alert.ok) == ("m_vp", False)
+
+
+def test_plan_answer_is_saved_and_reported(repo, pushed):
+    vp = repo.get_member("m_vp")
+    [reply] = proposal_submit.handle_plan_postback(repo, vp, "psp|ps1", {"date": "2026-11-03"},
+                                                   AFTER + timedelta(hours=2))
+    assert "11月3日(火) で承りました" in reply.text
+    p = repo.get_proposal("ps1")
+    [plan] = p.submit_plans
+    assert (plan.date.isoformat(), plan.member_id) == ("2026-11-03", "m_vp")
+    assert plan.by == "副理事長 次郎"
+    [(to, text)] = pushed
+    assert to == "U_sed"
+    assert text.startswith("【提出予定】総務委員会: 副理事長 次郎さん → 11月3日(火)")
+    # 変えたらまた知らせる
+    proposal_submit.handle_plan_postback(repo, vp, "psp|ps1", {"date": "2026-11-05"},
+                                         AFTER + timedelta(hours=3))
+    assert "11月5日(木)（11月3日(火) から変更）" in pushed[-1][1]
+    assert _row("tok-chair")["plan"] == "11月5日(木)（副理事長 次郎さん）"
+    row = next(r for r in client.get("/api/proposals", headers=ADMIN_AUTH).json()
+               if r["proposal_id"] == "ps1")
+    assert row["submit_plan_label"] == "11月5日(木)（副理事長 次郎さん）"
+
+
+def test_plan_answer_at_night_is_reported_in_the_morning(repo, pushed):
+    vp = repo.get_member("m_vp")
+    proposal_submit.handle_plan_postback(repo, vp, "psp|ps1", {"date": "2026-11-03"},
+                                         DEADLINE + timedelta(hours=1))
+    assert pushed == []
+    assert proposal_submit.process(repo, AFTER)["plans"] == 1
+    assert any(text.startswith("【提出予定】") for _, text in pushed)
+
+
+@pytest.mark.parametrize("member_id, params, expect", [
+    ("m_reg", {"date": "2026-11-03"}, "担当副理事長・委員長が答えられます"),
+    ("m_other", {"date": "2026-11-03"}, "担当副理事長・委員長が答えられます"),
+    ("m_vp", {"date": "2026-10-30"}, "今日以降の日付"),
+    ("m_vp", {}, "日付を読み取れませんでした"),
+])
+def test_plan_answer_refused(repo, pushed, member_id, params, expect):
+    [reply] = proposal_submit.handle_plan_postback(
+        repo, repo.get_member(member_id), "psp|ps1", params, AFTER)
+    assert expect in reply.text
+    assert repo.get_proposal("ps1").submit_plans == [] and pushed == []
+
+
+def test_plan_answer_after_submission(repo, pushed):
+    proposal_submit.submit(repo, repo.get_member("m_chair"), "ps1", MORNING)
+    [reply] = proposal_submit.handle_plan_postback(
+        repo, repo.get_member("m_vp"), "psp|ps1", {"date": "2026-11-03"}, AFTER)
+    assert "すでに提出されています" in reply.text
+
+
+def test_postback_is_routed_with_params(repo):
+    future = (datetime.now() + timedelta(days=30)).date().isoformat()
+    main.handle_postback("U_vp", "psp|ps1", {"date": future})
+    assert repo.get_proposal("ps1").submit_plans[0].date.isoformat() == future
+
+
+def test_realert_after_planned_date_passes_once(repo, pushed):
+    _arm(repo)
+    p = repo.get_proposal("ps1")
+    repo.upsert_proposal(p.model_copy(update={
+        "notices": {f"overdue:{DEADLINE.isoformat()}": AFTER},
+        "submit_plans": [SubmitPlan(date=datetime(2026, 11, 3).date(), member_id="m_vp",
+                                    by="副理事長 次郎", at=AFTER, notified_at=AFTER)]}))
+    assert proposal_submit.overdue_key(repo.get_proposal("ps1"),
+                                       datetime(2026, 11, 3, 20)) is None  # 予定日の当日はまだ
+    pushed.clear()
+    proposal_submit.process(repo, datetime(2026, 11, 4, 9))
+    flex = dict(pushed.raw)["U_vp"]
+    assert "提出予定日（11月3日(火)）を過ぎてもまだ提出されていません" in flex.alt_text
+    assert flex.contents.footer.contents[0].action.min == "2026-11-04"
+    pushed.clear()
+    proposal_submit.process(repo, datetime(2026, 11, 4, 15))
+    assert not any(t == "U_vp" for t, _ in pushed)  # 同じ予定日では二度送らない
