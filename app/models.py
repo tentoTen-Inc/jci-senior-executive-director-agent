@@ -709,6 +709,8 @@ class Proposal(BaseModel):
     committee: str | None = None
     owner_member_id: str | None = None
     event_id: str | None = None  # 上程先の会議体
+    #: 上程先の会議が日程調整中のとき、その日程調整（決まれば poll.event_id の会議になる）
+    meeting_poll_id: str | None = None
     stage: ProposalStage = ProposalStage.entry
     doc_type: str = "事業計画書"
     content: str | None = None  # 議案本文（Drive取込/手入力）
@@ -730,6 +732,9 @@ class Proposal(BaseModel):
     event_date: str | None = None  # 実施日（YYYY-MM-DD）
     venue: str | None = None
     participants: str | None = None
+    #: 専務に送った知らせ（キー → 送った時刻）。同じ知らせを二度送らない
+    #: （"submitted:<提出の時刻>"・"deadline:<提出締切>"。docs/proposal-ledger-design.md §10）
+    notices: dict[str, datetime] = Field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------- #

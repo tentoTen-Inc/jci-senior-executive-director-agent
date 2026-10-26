@@ -46,7 +46,12 @@ type Proposal = {
   event_date?: string | null;
   venue?: string | null;
   participants?: string | null;
+  // 上程先の会議（日程調整中なら「〇〇（日程調整中）」）と空欄の欄の数（サーバーが添える）
+  meeting_label?: string | null;
+  meeting_poll_id?: string | null;
+  blank_count?: number | null;
 };
+const SUMMARY_TYPE = "年間計画（サマリー）";
 
 type CellState = "done" | "pending" | "unset" | "soon" | "overdue";
 type MatrixCell = {
@@ -418,6 +423,7 @@ function KanbanCard({ p, active, onClick }: { p: Proposal; active: boolean; onCl
       <div className="mt-0.5 truncate text-xs text-ink-sub">
         {[p.number, p.committee].filter(Boolean).join("・") || "委員会未設定"}
       </div>
+      {p.meeting_label && <div className="mt-0.5 truncate text-xs text-ink-sub">上程先: {p.meeting_label}</div>}
       <div className="mt-2 flex flex-wrap gap-1">
         <DeadlineBadge p={p} />
         {p.sed_approval?.status !== "pending" && <Badge tone={ap.tone}>{ap.label}</Badge>}
@@ -561,7 +567,13 @@ function Detail({
             {p.committee || "委員会未設定"}・{p.doc_type}
           </span>
           <DeadlineBadge p={p} />
+          {p.blank_count != null && (
+            <Badge tone={p.blank_count ? "amber" : "green"}>
+              {p.blank_count ? `空欄 ${p.blank_count} 欄` : "すべて記入済み"}
+            </Badge>
+          )}
         </div>
+        {p.meeting_label && <div className="mt-1 text-sm">上程先: <span className="font-bold">{p.meeting_label}</span></div>}
         {url && (
           <a href={url} target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-bold text-line-ink hover:underline">
             議案書を開く（Google ドキュメント）
@@ -1051,7 +1063,8 @@ function PlanContent({ p }: { p: Proposal }) {
   const sections = Object.entries(p.sections ?? {}).filter(([, v]) => v.trim());
   const meetings = new Map<string, NonNullable<Proposal["feedback"]>>();
   for (const f of p.feedback ?? []) meetings.set(f.meeting, [...(meetings.get(f.meeting) ?? []), f]);
-  const facts: [string, string | null | undefined][] = [
+  const summary = p.doc_type === SUMMARY_TYPE;
+  const facts: [string, string | null | undefined][] = summary ? [] : [
     ["実施日", p.event_date],
     ["場所", p.venue],
     ["対象・人数", p.participants],
@@ -1061,7 +1074,7 @@ function PlanContent({ p }: { p: Proposal }) {
   return (
     <section className="rounded-card bg-white p-5">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="font-extrabold">事業計画書の内容</h3>
+        <h3 className="font-extrabold">{p.doc_type}の内容</h3>
         {p.synced_at && <span className="text-xs text-ink-faint">文書から読み取り: {fmtDateTime(p.synced_at)}</span>}
       </div>
       <dl className="mt-2 grid grid-cols-[7rem_1fr] gap-y-1.5 text-sm">
@@ -1074,7 +1087,7 @@ function PlanContent({ p }: { p: Proposal }) {
       </dl>
       <details className="mt-3 text-sm">
         <summary className="cursor-pointer font-bold text-line-ink">
-          事業要項（記入済み {sections.length} / {Object.keys(p.sections ?? {}).length} 項目）
+          {summary ? "記入欄" : "事業要項"}（記入済み {sections.length} / {Object.keys(p.sections ?? {}).length} 項目）
         </summary>
         <div className="mt-2 space-y-3">
           {sections.map(([k, v]) => (

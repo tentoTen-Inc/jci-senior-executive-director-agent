@@ -110,14 +110,35 @@
               } catch (err) { draw({ ok: false, text: err.message }); }
             },
           }, "この資料で作業する") : null;
+          // ［提出する］／［提出を取り消す］（確認してから。権限はサーバーが確かめる）
+          const change = (action, question) => async (e) => {
+            if (!confirm(question)) return;
+            e.target.disabled = true;
+            try {
+              view = await api("POST", `/liff/api/proposals/${encodeURIComponent(p.proposal_id)}/${action}`);
+              draw({ ok: true, text: view.message });
+            } catch (err) { draw({ ok: false, text: err.message }); }
+          };
+          const blanks = p.blanks ? `空欄が ${p.blanks} 欄あります。` : "";
+          const submit = p.can_submit ? el("button", {
+            type: "button", class: "primary",
+            onclick: change("submit", `「${p.title}」を提出します。${blanks}専務に LINE で知らせます。よろしいですか？`),
+          }, "提出する") : null;
+          const withdraw = p.can_withdraw ? el("button", {
+            type: "button",
+            onclick: change("withdraw", `「${p.title}」の提出を取り消して、エントリーに戻します。よろしいですか？`),
+          }, "提出を取り消す") : null;
           kids.push(el("div", { class: "card" },
             el("div", { class: "meta" }, `${p.committee}｜${p.stage}${p.event_date ? `｜実施 ${p.event_date}` : ""}`),
             el("h2", {}, p.title),
+            p.meeting ? el("div", { class: "hint" }, `上程先: ${p.meeting}`) : null,
             p.deadlines.length ? el("div", { class: "hint" }, p.deadlines.map((d) => `${d.label}〆 ${d.at}`).join("　")) : null,
+            p.blanks !== null && p.blanks !== undefined ? el("div", { class: "hint" }, p.blanks ? `空欄 ${p.blanks} 欄` : "すべての欄が記入済みです") : null,
             feedback,
             el("div", { class: "actions" },
               p.url ? el("a", { href: p.url, target: "_blank", rel: "noopener" }, "議案書を開く") : null,
-              work)));
+              work),
+            submit || withdraw ? el("div", { class: "actions" }, submit, withdraw) : null));
         }
         app.replaceChildren(...kids);
       };

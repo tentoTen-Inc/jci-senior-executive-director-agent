@@ -54,6 +54,7 @@ from . import (
     line_link,
     line_push,
     line_worker,
+    proposal_submit,
     proposal_sync,
 )
 from . import lake_api as lake_api_module
@@ -500,12 +501,18 @@ def tasks_tick():
     # ドライブの資料を取り込んでから索引する（同じ tick で新しい資料も検索できるように）
     lake_result = {"redact": redact_unsent(), "drive": drive_knowledge.sync(),
                    "knowledge": index_knowledge()}
-    # 事業計画書（作業文書）を議案台帳に写す（docs/proposal-ledger-design.md §5）
+    # 事業計画書・委員会サマリー（作業文書）を議案台帳に写す（docs/proposal-ledger-design.md §5）
     proposals_result = proposal_sync.sync(repo, now)
+    # 議案の提出・提出締切を専務に知らせる（写した後の空欄の数で。proposal-ledger-design §10）
+    try:
+        proposal_notice_result = proposal_submit.process(repo, now)
+    except Exception:  # noqa: BLE001 - tick 本体を止めない
+        logger.exception("議案の知らせに失敗しました")
+        proposal_notice_result = {"error": "proposal_notice_failed"}
     return {
         "planned": len(jobs), "results": results, "gmail": gmail_result, "gcal": gcal_result,
         "lake": lake_result, "posts": posts_result, "proposals": proposals_result,
-        "feedback": feedback_result,
+        "feedback": feedback_result, "proposal_notices": proposal_notice_result,
     }
 
 

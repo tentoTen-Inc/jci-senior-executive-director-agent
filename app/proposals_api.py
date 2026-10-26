@@ -22,6 +22,8 @@ from .models import (
     SedApproval,
 )
 from .proposal_matrix import build_proposal_matrix
+from .proposal_submit import meeting_label
+from .proposal_sync import blank_count
 
 router = APIRouter(tags=["proposals"])
 
@@ -49,15 +51,23 @@ class ProposalUpdate(BaseModel):
     committee: str | None = None
     owner_member_id: str | None = None
     event_id: str | None = None
+    meeting_poll_id: str | None = None  # 上程先の会議が日程調整中のとき
     doc_type: str | None = None
     content: str | None = None
     storage_uri: str | None = None
     deadlines: ProposalDeadlines | None = None
 
 
+def _out(repo, p: Proposal) -> dict:
+    """画面用: 上程先の会議の表示（日程調整中なら「〇〇（日程調整中）」）と空欄の数を添える。"""
+    return {**p.model_dump(mode="json"), "meeting_label": meeting_label(repo, p),
+            "blank_count": blank_count(p) if p.sections else None}
+
+
 @router.get("/proposals")
 def list_proposals(status: str | None = None):
-    return get_repo().list_proposals(status=status)
+    repo = get_repo()
+    return [_out(repo, p) for p in repo.list_proposals(status=status)]
 
 
 class DriveImport(BaseModel):
@@ -101,10 +111,11 @@ def proposal_matrix(status: str | None = "open"):
 
 @router.get("/proposals/{proposal_id}")
 def get_proposal(proposal_id: str):
-    p = get_repo().get_proposal(proposal_id)
+    repo = get_repo()
+    p = repo.get_proposal(proposal_id)
     if p is None:
         raise HTTPException(status_code=404, detail="proposal not found")
-    return p
+    return _out(repo, p)
 
 
 @router.post("/proposals")
