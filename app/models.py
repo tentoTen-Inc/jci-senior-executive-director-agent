@@ -825,8 +825,11 @@ class ScheduledPost(BaseModel):
 
     post_id: str
     group_id: str
-    kind: str  # link_invite（LINE 連携のお願い） | poll_announce（日程調整の案内）
-    poll_id: str | None = None  # kind=poll_announce のとき
+    #: link_invite（LINE 連携のお願い） | poll_announce（日程調整の案内）
+    #: | poll_remind（日程調整の催促） | poll_decide（日程調整の確定と決定の連絡）
+    kind: str
+    poll_id: str | None = None  # kind=poll_* のとき
+    candidate_id: str | None = None  # kind=poll_decide のとき、確定する候補日
     send_at: datetime
     status: ScheduledPostStatus = ScheduledPostStatus.pending
     sent_at: datetime | None = None
