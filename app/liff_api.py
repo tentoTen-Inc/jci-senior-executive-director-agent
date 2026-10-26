@@ -15,7 +15,16 @@ from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
 
-from . import committee_docs, doc_session, feedback_box, line_link, line_push, roles
+from . import (
+    committee_docs,
+    doc_session,
+    feedback_box,
+    line_link,
+    line_push,
+    proposal_submit,
+    proposal_sync,
+    roles,
+)
 from . import schedule_poll as sp
 from .attendance import aggregate, record_attendance
 from .audit import write_audit
@@ -225,8 +234,27 @@ def proposals_view(repo: Repository, member: Member) -> dict:
             "deadlines": deadlines, "url": p.storage_uri,
             "feedback": [f.model_dump() for f in p.feedback],
             "can_work": bool(_doc_id(p)) and committee_docs.can_edit(member, p.committee),
+            "doc_type": p.doc_type, "meeting": proposal_submit.meeting_label(repo, p),
+            "blanks": proposal_sync.blank_count(p) if p.sections else None,
+            "can_submit": proposal_submit.can_submit(member, p),
+            "can_withdraw": proposal_submit.can_withdraw(member, p),
+            "plan": proposal_submit.plan_label(p),
         })
     return {"proposals": rows, "work_enabled": committee_docs.is_enabled()}
+
+
+def change_submission(repo: Repository, member: Member, proposal_id: str, action: str,
+                      now: datetime) -> dict:
+    """［提出する］／［提出を取り消す］（画面で確認したあと）。見られる議案だけ。"""
+    if not any(p.proposal_id == proposal_id for p in _visible_proposals(repo, member)):
+        raise LiffError(404, "議案が見つかりません。")
+    if action == "submit":
+        p = proposal_submit.submit(repo, member, proposal_id, now)
+        message = f"{proposal_submit.doc_label(p)}を提出しました。専務に知らせます。"
+    else:
+        p = proposal_submit.withdraw(repo, member, proposal_id, now)
+        message = f"{proposal_submit.doc_label(p)}の提出を取り消しました。"
+    return {"message": message, **proposals_view(repo, member)}
 
 
 def start_work(repo: Repository, member: Member, proposal_id: str, now: datetime) -> str:
@@ -258,6 +286,24 @@ def liff_proposals(request: Request):
     try:
         return proposals_view(get_repo(), viewer(request))
     except (LiffError, sp.PollError) as exc:
+        return _error(exc)
+
+
+@router.post("/liff/api/proposals/{proposal_id}/submit")
+def liff_proposal_submit(proposal_id: str, request: Request):
+    try:
+        return change_submission(get_repo(), viewer(request), proposal_id, "submit",
+                                 datetime.now())
+    except (LiffError, sp.PollError, proposal_submit.SubmitError) as exc:
+        return _error(exc)
+
+
+@router.post("/liff/api/proposals/{proposal_id}/withdraw")
+def liff_proposal_withdraw(proposal_id: str, request: Request):
+    try:
+        return change_submission(get_repo(), viewer(request), proposal_id, "withdraw",
+                                 datetime.now())
+    except (LiffError, sp.PollError, proposal_submit.SubmitError) as exc:
         return _error(exc)
 
 

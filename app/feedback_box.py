@@ -15,24 +15,19 @@ from datetime import datetime, timedelta
 
 from linebot.v3.messaging import QuickReply, QuickReplyItem, TextMessage, URIAction
 
-from . import line_push
 from . import schedule_poll as sp
-from .delivery import execute_delivery
-from .guardrails import is_quiet_hours
 from .inference import record_inference
 from .llm import digest_feedback, model_for, triage_feedback
 from .models import (
-    DeliveryJob,
-    DeliveryStatus,
     Feedback,
     FeedbackDigest,
     FeedbackKind,
     FeedbackStatus,
     InferenceUsage,
     Member,
-    MemberStatus,
 )
 from .repository import Repository
+from .sed_notice import notify_sed
 
 logger = logging.getLogger("jci-agent.feedback")
 
@@ -54,7 +49,6 @@ TRIAGE_PER_TICK = 5
 TRIAGE_RETRY = timedelta(hours=1)
 #: 傾向のまとめに使う件数（新しい順）
 DIGEST_MAX = 200
-NOTIFY_ROLES = ("専務理事",)
 ADMIN_FEEDBACK_URL = "https://admin.647jc.org/app/feedback"
 
 LABEL = "意見箱"
@@ -170,25 +164,8 @@ def notify_text(repo: Repository, items: list[Feedback]) -> str:
 
 def _notify(repo: Repository, items: list[Feedback], now: datetime) -> int:
     """専務理事に知らせる。静音時間は送らず次の tick に回す。知らせた件数を返す。"""
-    if not items:
+    if not items or not notify_sed(repo, notify_text(repo, items), now, "feedback_notice"):
         return 0
-    settings = repo.get_settings()
-    if is_quiet_hours(now, settings):
-        return 0
-    targets = [m.member_id for m in repo.list_members()
-               if m.officer_role in NOTIFY_ROLES and m.line_user_id
-               and m.status == MemberStatus.active]
-    if targets:
-        body = notify_text(repo, items)
-        job = DeliveryJob(job_id=f"fbn_{now:%Y%m%d%H%M%S}_{uuid.uuid4().hex[:4]}",
-                          type="feedback_notice", targets=targets, scheduled_at=now,
-                          status=DeliveryStatus.queued)
-        repo.save_delivery_job(job)
-        report = execute_delivery(
-            repo, job, body, now=now,
-            sender=line_push.member_messages_sender(repo, [TextMessage(text=body)]))
-        if report.halted or report.deferred:
-            return 0
     for item in items:
         repo.save_feedback(item.model_copy(update={"notified_at": now}))
     return len(items)

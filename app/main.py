@@ -54,6 +54,7 @@ from . import (
     line_link,
     line_push,
     line_worker,
+    proposal_submit,
     proposal_sync,
 )
 from . import lake_api as lake_api_module
@@ -358,7 +359,8 @@ def handle_event(event) -> None:
         user_id = event.source.user_id
         data = event.postback.data
         logger.info("postback event: userId=%s data=%s", user_id, data)
-        messages = handle_postback(user_id, data)
+        params = getattr(event.postback, "params", None)  # datetimepicker で選んだ日付など
+        messages = handle_postback(user_id, data, params)
         if messages:
             reply_messages(event.reply_token, messages)
     else:
@@ -392,7 +394,7 @@ def dispatch_event(event, *, fail_open: bool) -> bool:
     return True
 
 
-def handle_postback(user_id: str, data: str) -> list[Message]:
+def handle_postback(user_id: str, data: str, params: dict | None = None) -> list[Message]:
     """postback（出欠ボタン・メニュー）を処理してメッセージ列を返す。"""
     # リッチメニューのタブ切り替え（richmenuswitch）。LINE 側で切り替わるので返事はしない
     if data.startswith("tab:"):
@@ -420,6 +422,8 @@ def handle_postback(user_id: str, data: str) -> list[Message]:
         return handle_done_postback(repo, member.member_id, data)
     if data.startswith(f"{line_link.ACTION_LINK}|"):
         return line_link.handle_postback(repo, member, data, now=datetime.now())
+    if data.startswith(f"{proposal_submit.ACTION_PLAN}|"):
+        return proposal_submit.handle_plan_postback(repo, member, data, params, datetime.now())
     return apply_postback(repo, member, data, now=datetime.now())
 
 
@@ -500,12 +504,18 @@ def tasks_tick():
     # ドライブの資料を取り込んでから索引する（同じ tick で新しい資料も検索できるように）
     lake_result = {"redact": redact_unsent(), "drive": drive_knowledge.sync(),
                    "knowledge": index_knowledge()}
-    # 事業計画書（作業文書）を議案台帳に写す（docs/proposal-ledger-design.md §5）
+    # 事業計画書・委員会サマリー（作業文書）を議案台帳に写す（docs/proposal-ledger-design.md §5）
     proposals_result = proposal_sync.sync(repo, now)
+    # 議案の提出・提出締切を専務に知らせる（写した後の空欄の数で。proposal-ledger-design §10）
+    try:
+        proposal_notice_result = proposal_submit.process(repo, now)
+    except Exception:  # noqa: BLE001 - tick 本体を止めない
+        logger.exception("議案の知らせに失敗しました")
+        proposal_notice_result = {"error": "proposal_notice_failed"}
     return {
         "planned": len(jobs), "results": results, "gmail": gmail_result, "gcal": gcal_result,
         "lake": lake_result, "posts": posts_result, "proposals": proposals_result,
-        "feedback": feedback_result,
+        "feedback": feedback_result, "proposal_notices": proposal_notice_result,
     }
 
 

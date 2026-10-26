@@ -1,4 +1,4 @@
-"""事業計画書から議案台帳への同期（docs/proposal-ledger-design.md L2）。"""
+"""事業計画書・委員会サマリーから議案台帳への同期（docs/proposal-ledger-design.md L2・§10）。"""
 import json
 from datetime import datetime
 from pathlib import Path
@@ -6,25 +6,30 @@ from pathlib import Path
 import pytest
 
 from app import committee_docs, proposal_sync
-from app.models import Proposal, ProposalStage
+from app.models import Proposal, ProposalStage, Settings
 from app.repository import InMemoryRepository
 
 NOW = datetime(2027, 1, 10, 9, 0)
-PLAN = json.loads((Path(__file__).parent / "fixtures" / "business_plan_doc.json").read_text())
+FIXTURES = Path(__file__).parent / "fixtures"
+PLAN = json.loads((FIXTURES / "business_plan_doc.json").read_text())
+SUMMARY = json.loads((FIXTURES / "committee_summary_doc.json").read_text())
 DOC = {"id": "doc_plan", "name": "【計画書】3月例会事業計画書",
        "path": "01-例会・事業/2703_3月例会", "modified_at": "2027-01-09T10:00:00.000Z"}
+SUM = {"id": "sum", "name": "2027_summary_総務委員会", "path": "00-年間計画（サマリー）",
+       "modified_at": "2026-10-20T10:00:00.000Z"}
+OTHER = {"id": "memo", "name": "打合せメモ", "path": "02-議事録"}
 
 
 @pytest.fixture
 def drive(monkeypatch):
     monkeypatch.setenv("COMMITTEE_DOCS_FOLDER", "root")
-    state = {"docs": [DOC, {"id": "sum", "name": "2027_summary_総務委員会", "path": ""}],
-             "reads": []}
+    state = {"docs": [DOC, OTHER], "reads": []}
     monkeypatch.setattr(committee_docs, "_token", lambda: "tok")
     monkeypatch.setattr(committee_docs, "committee_folders", lambda token: {"総務委員会": "c2"})
     monkeypatch.setattr(committee_docs, "find_docs", lambda folder, token: list(state["docs"]))
     monkeypatch.setattr(committee_docs, "read_doc",
-                        lambda doc_id, token: state["reads"].append(doc_id) or PLAN)
+                        lambda doc_id, token: state["reads"].append(doc_id)
+                        or (SUMMARY if doc_id == "sum" else PLAN))
     return state
 
 
@@ -77,7 +82,7 @@ def test_sync_creates_proposal_from_plan_only(drive):
     assert "1.事業実施に至る背景・問題の原因" in p.sections
     assert p.storage_uri == "https://docs.google.com/document/d/doc_plan/edit"
     assert p.doc_modified_at == DOC["modified_at"] and p.synced_at == NOW
-    assert drive["reads"] == ["doc_plan"]  # サマリーは読まない
+    assert drive["reads"] == ["doc_plan"]  # 計画書・サマリー以外は読まない
 
 
 def test_sync_reads_only_changed_docs(drive):
@@ -124,3 +129,47 @@ def test_sync_disabled_and_failure(drive, monkeypatch):
     assert proposal_sync.sync(InMemoryRepository(), NOW) == {"error": "proposal_sync_failed"}
     monkeypatch.delenv("COMMITTEE_DOCS_FOLDER")
     assert proposal_sync.sync(InMemoryRepository(), NOW) is None
+
+
+# --------------------------------------------------------------------------- #
+# 委員会サマリー（§10）
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("doc, kind", [
+    (DOC, "事業計画書"),
+    ({"name": "2027_summary_総務委員会", "path": ""}, "年間計画（サマリー）"),
+    ({"name": "総務委員会サマリー", "path": ""}, "年間計画（サマリー）"),
+    ({"name": "総務委員会", "path": "00-年間計画（サマリー）"}, "年間計画（サマリー）"),
+    (OTHER, None),
+])
+def test_doc_type(doc, kind):
+    assert proposal_sync.doc_type(doc) == kind
+
+
+def test_sync_creates_summary_with_sections(drive):
+    repo = InMemoryRepository()
+    repo.save_settings(Settings(operation_start=datetime(2027, 1, 1).date()))
+    drive["docs"] = [DOC, SUM]
+    assert proposal_sync.sync(repo, NOW)["created"] == 2
+    [s] = [p for p in repo.list_proposals() if p.doc_id == "sum"]
+    assert s.doc_type == "年間計画（サマリー）" and s.stage == ProposalStage.entry
+    assert s.title == "2027年度 総務委員会 年間計画（サマリー）"
+    assert list(s.sections)[:5] == list(proposal_sync.SUMMARY_KEYS)
+    assert "例会/事業・1月" in s.sections and "（参考）LOM日程・1月" not in s.sections
+    assert proposal_sync.blank_count(s) == 17  # 5欄＋12か月すべて空欄
+    assert s.event_date is None
+
+
+def test_closing_missing_plans_does_not_close_summaries(drive):
+    repo = InMemoryRepository()
+    drive["docs"] = [DOC, SUM]
+    proposal_sync.sync(repo, NOW)
+    drive["docs"] = [SUM]  # 計画書だけゴミ箱へ
+    assert proposal_sync.sync(repo, NOW)["closed"] == 1
+    status = {p.doc_id: p.status for p in repo.list_proposals()}
+    assert status == {"doc_plan": "closed", "sum": "open"}
+
+
+def test_blank_count_treats_placeholder_as_blank():
+    p = Proposal(proposal_id="p", title="t", sections={
+        "a": "", "b": "  ", "c": "◯月◯日", "d": "記入済み", "e": "◯\n本文あり"})
+    assert proposal_sync.blank_count(p) == 3

@@ -1,6 +1,9 @@
-"""事業計画書（作業文書）から議案台帳への同期（docs/proposal-ledger-design.md §4・§5）。
+"""事業計画書・委員会サマリー（作業文書）から議案台帳への同期。
 
-04-委員会 の各委員会フォルダにある「【計画書】」で始まる Google ドキュメントを、
+設計: docs/proposal-ledger-design.md §4・§5・§10。
+
+04-委員会 の各委員会フォルダにある「【計画書】」で始まる Google ドキュメント（事業計画書）と、
+委員会サマリー（`00-年間計画（サマリー）` 配下、または名前に summary／サマリー を含むもの）を、
 更新日時が変わったものだけ読み取り、表の項目（committee_docs.extract_fields）を台帳に写す。
 台帳に無ければ新しい議案（エントリー）として作る。文書が見つからなくなった議案は closed にする。
 
@@ -15,12 +18,18 @@ import uuid
 from datetime import datetime
 
 from . import committee_docs
+from .doc_edit_intent import is_summary
 from .models import Proposal, ProposalFeedback, ProposalHistory, ProposalStage
 from .repository import Repository
 
 logger = logging.getLogger("jci-agent.proposal_sync")
 
 PLAN_PREFIX = "【計画書】"
+PLAN_TYPE = "事業計画書"
+SUMMARY_TYPE = "年間計画（サマリー）"
+#: 委員会サマリーの記入欄（「（参考）LOM日程」は記入済みの参考なので写さない）
+SUMMARY_KEYS = ("スローガン", "現状分析", "目指すべき状態", "事業概要", "事業手法")
+SUMMARY_MONTH_PREFIX = "例会/事業・"
 SYNC_BATCH = 20  # 1回の tick で読み取る文書の上限（残りは次回）
 SYNC_SECONDS = 30  # 読み取りに使う時間の上限
 
@@ -40,6 +49,19 @@ _PLACEHOLDER = "◯"
 
 def is_plan(doc: dict) -> bool:
     return doc["name"].startswith(PLAN_PREFIX)
+
+
+def doc_type(doc: dict) -> str | None:
+    """台帳に載せる文書の種類（事業計画書・委員会サマリー）。それ以外は None。"""
+    if is_plan(doc):
+        return PLAN_TYPE
+    if is_summary(doc):
+        return SUMMARY_TYPE
+    return None
+
+
+def summary_title(committee: str, fiscal_year: int | None) -> str:
+    return f"{f'{fiscal_year}年度 ' if fiscal_year else ''}{committee} 年間計画（サマリー）"
 
 
 # --------------------------------------------------------------------------- #
@@ -103,14 +125,36 @@ def apply_fields(proposal: Proposal, fields: dict[str, str], title: str) -> Prop
     })
 
 
+def apply_summary_fields(proposal: Proposal, fields: dict[str, str]) -> Proposal:
+    """委員会サマリーの記入欄（スローガン〜事業手法・年間スケジュール）を sections に写す。"""
+    sections = {k: fields.get(k, "") for k in SUMMARY_KEYS}
+    sections |= {k: v for k, v in fields.items() if k.startswith(SUMMARY_MONTH_PREFIX)}
+    return proposal.model_copy(update={
+        "title": summary_title(proposal.committee or "", proposal.fiscal_year),
+        "sections": sections,
+        "content": "\n\n".join(f"【{k}】\n{v}" for k, v in sections.items() if v),
+    })
+
+
+def blank_count(proposal: Proposal) -> int:
+    """空欄の欄の数（記入例「◯」のままも空欄とみなす）。"""
+    return sum(1 for v in proposal.sections.values()
+               if not v.strip() or _first_line(v) is None)
+
+
 # --------------------------------------------------------------------------- #
 # 同期
 # --------------------------------------------------------------------------- #
-def _new_proposal(doc: dict, committee: str, now: datetime) -> Proposal:
+def _new_proposal(doc: dict, committee: str, kind: str, fiscal_year: int | None,
+                  now: datetime) -> Proposal:
+    title = (summary_title(committee, fiscal_year) if kind == SUMMARY_TYPE
+             else doc["name"].removeprefix(PLAN_PREFIX))
     return Proposal(
         proposal_id=f"prp_{uuid.uuid4().hex[:10]}",
-        title=doc["name"].removeprefix(PLAN_PREFIX),
+        title=title,
         committee=committee,
+        doc_type=kind,
+        fiscal_year=fiscal_year if kind == SUMMARY_TYPE else None,
         doc_id=doc["id"],
         storage_uri=committee_docs.doc_url(doc["id"]),
         stage=ProposalStage.entry,
@@ -119,14 +163,17 @@ def _new_proposal(doc: dict, committee: str, now: datetime) -> Proposal:
 
 
 def sync(repo: Repository, now: datetime) -> dict | None:
-    """更新された事業計画書を台帳に写す（tick から呼ぶ）。無効なら None。"""
+    """更新された事業計画書・委員会サマリーを台帳に写す（tick から呼ぶ）。無効なら None。"""
     if not committee_docs.is_enabled():
         return None
     try:
         token = committee_docs._token()
+        start = repo.get_settings().operation_start
+        fiscal_year = start.year if start else now.year
         docs: list[tuple[str, dict]] = []
         for committee, folder in committee_docs.committee_folders(token).items():
-            docs += [(committee, d) for d in committee_docs.find_docs(folder, token) if is_plan(d)]
+            docs += [(committee, d) for d in committee_docs.find_docs(folder, token)
+                     if doc_type(d)]
         by_doc = {p.doc_id: p for p in repo.list_proposals() if p.doc_id}
         changed = [(c, d) for c, d in docs
                    if by_doc.get(d["id"]) is None
@@ -139,18 +186,24 @@ def sync(repo: Repository, now: datetime) -> dict | None:
                 break
             content = committee_docs.read_doc(doc["id"], token)
             fields = {f.name: f.text for f in committee_docs.extract_fields(content)}
+            kind = doc_type(doc)
             current = by_doc.get(doc["id"])
             if current is None:
-                current = _new_proposal(doc, committee, now)
+                current = _new_proposal(doc, committee, kind, fiscal_year, now)
                 created += 1
             else:
                 updated += 1
-            proposal = apply_fields(current, fields, doc["name"].removeprefix(PLAN_PREFIX))
+            if kind == SUMMARY_TYPE:
+                proposal = apply_summary_fields(
+                    current.model_copy(update={"committee": committee}), fields)
+            else:
+                proposal = apply_fields(current, fields, doc["name"].removeprefix(PLAN_PREFIX))
             repo.upsert_proposal(proposal.model_copy(update={
                 "committee": committee, "status": "open",
                 "doc_modified_at": doc.get("modified_at"), "synced_at": now,
             }))
-        # 文書が見つからなくなった（ゴミ箱・委員会フォルダの外へ移動）議案は閉じる
+        # 文書が見つからなくなった（ゴミ箱・委員会フォルダの外へ移動）議案は閉じる。
+        # docs には事業計画書とサマリーの両方が入っているので、サマリーを誤って閉じない
         present = {d["id"] for _, d in docs}
         closed = 0
         for doc_id, proposal in by_doc.items():

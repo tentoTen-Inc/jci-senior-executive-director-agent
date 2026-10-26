@@ -691,6 +691,26 @@ class ProposalHistory(BaseModel):
     by: str = "system"
 
 
+class SubmitPlan(BaseModel):
+    """提出締切を過ぎた議案の提出予定日（担当副理事長などが LINE のボタンで答えた）。"""
+
+    date: date
+    member_id: str
+    by: str  # 答えた人の氏名
+    at: datetime
+    notified_at: datetime | None = None  # 専務に「【提出予定】」を知らせた時刻
+
+
+class ProposalAlert(BaseModel):
+    """未提出の議案について担当副理事長に送った知らせ（届かなければ ok=False）。"""
+
+    key: str  # "overdue:<締切>" / "plan:<予定日>"
+    at: datetime
+    member_id: str | None = None
+    name: str | None = None
+    ok: bool = True
+
+
 class ProposalFeedback(BaseModel):
     """事業計画書の「審議の記録」の1件（docs/proposal-ledger-design.md §2）。"""
 
@@ -709,6 +729,8 @@ class Proposal(BaseModel):
     committee: str | None = None
     owner_member_id: str | None = None
     event_id: str | None = None  # 上程先の会議体
+    #: 上程先の会議が日程調整中のとき、その日程調整（決まれば poll.event_id の会議になる）
+    meeting_poll_id: str | None = None
     stage: ProposalStage = ProposalStage.entry
     doc_type: str = "事業計画書"
     content: str | None = None  # 議案本文（Drive取込/手入力）
@@ -730,6 +752,13 @@ class Proposal(BaseModel):
     event_date: str | None = None  # 実施日（YYYY-MM-DD）
     venue: str | None = None
     participants: str | None = None
+    #: 専務に送った知らせ（キー → 送った時刻）。同じ知らせを二度送らない
+    #: （"submitted:<提出の時刻>"・"deadline:<提出締切>"。docs/proposal-ledger-design.md §10）
+    notices: dict[str, datetime] = Field(default_factory=dict)
+    #: 提出締切を設定・変更した時刻。これより前に過ぎていた締切では未提出の知らせを送らない
+    submit_deadline_set_at: datetime | None = None
+    submit_plans: list[SubmitPlan] = Field(default_factory=list)  # 提出予定日（新しいものが最後）
+    alerts: list[ProposalAlert] = Field(default_factory=list)  # 担当副理事長への未提出の知らせ
 
 
 # --------------------------------------------------------------------------- #
