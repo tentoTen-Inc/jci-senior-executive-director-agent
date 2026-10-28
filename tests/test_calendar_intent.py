@@ -308,8 +308,9 @@ def test_webhook_flow_free_text_only_guides(repo, monkeypatch, cal):
 
 def test_webhook_flow_after_calendar_button(repo, monkeypatch, cal):
     """［予定を登録・変更］の後の1通だけ予定の指示として読み、確認してから反映する。"""
+    # 入口は今の時刻で過去の日時をはじくので、テストの日付は先の日付にする
     _llm(monkeypatch, action="create", type="委員会", title="総務委員会",
-         start="2026-10-27T19:00", confident=True)
+         start="2099-10-27T19:00", confident=True)
     start = main.handle_postback("U_sed", "menu|予定を登録・変更")
     assert "1通で送ってください" in start[0].text
     msgs = main.handle_text_message("U_sed", "27日19時に総務委員会の予定を追加して")
