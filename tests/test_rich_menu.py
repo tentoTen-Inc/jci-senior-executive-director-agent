@@ -168,3 +168,68 @@ def test_approve_link_attaches_menu(linked, monkeypatch):
         CommitteeSeat(committee="総務委員会", role="委員長")]))
     line_link.approve(repo, "U_chair", "admin", datetime(2026, 10, 25), member_id="m13")
     assert posts == ["https://api.line.me/v2/bot/user/U_chair/richmenu/rm_board"]
+
+
+# --------------------------------------------------------------------------- #
+# 1日1回の確認と、友だち追加での結びつけ
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def current(linked, monkeypatch):
+    """LINE 側で今結びついているメニュー（line_user_id → ID。無ければ None）。"""
+    repo, posts = linked
+    now_menus = {}
+    monkeypatch.setattr(rich_menu_link, "_get",
+                        lambda url, token: now_menus.get(url.split("/")[-2]))
+    return repo, posts, now_menus
+
+
+MORNING = datetime(2026, 10, 28, 8, 0)
+
+
+def test_reconcile_relinks_only_mismatched(current):
+    repo, posts, now_menus = current
+    repo.upsert_member(Member(member_id="m3", name="理事長", officer_role="理事長",
+                              line_user_id="U_pres"))
+    repo.upsert_member(Member(member_id="m2", name="専務", officer_role="専務理事",
+                              line_user_id="U_sed"))
+    repo.upsert_member(Member(member_id="m10", name="委員長", line_user_id="U_chair",
+                              committees=[CommitteeSeat(committee="総務委員会", role="委員長")]))
+    repo.upsert_member(Member(member_id="m14", name="会員", line_user_id="U_mem"))
+    repo.upsert_member(Member(member_id="m99", name="未連携"))
+    now_menus.update({"U_sed": "rm_ops",  # 「運営」タブに切り替え中は正しい
+                      "U_chair": "rm_member", "U_mem": "rm_member"})  # 理事長は結びつき無し
+
+    assert rich_menu_link.reconcile(repo, MORNING) == {"checked": 4, "relinked": 2, "failed": 0}
+    assert posts == ["https://api.line.me/v2/bot/user/U_pres/richmenu/rm_officer",
+                     "https://api.line.me/v2/bot/user/U_chair/richmenu/rm_board"]
+
+
+def test_reconcile_runs_once_a_day(current):
+    repo, posts, _ = current
+    repo.upsert_member(Member(member_id="m3", name="理事長", officer_role="理事長",
+                              line_user_id="U_pres"))
+    assert rich_menu_link.reconcile(repo, datetime(2026, 10, 28, 9, 0)) is None
+    assert posts == []
+
+
+def test_reconcile_skips_failures(current, monkeypatch):
+    repo, posts, _ = current
+    repo.upsert_member(Member(member_id="m3", name="理事長", officer_role="理事長",
+                              line_user_id="U_pres"))
+
+    def boom(url, token):
+        raise OSError("LINE down")
+    monkeypatch.setattr(rich_menu_link, "_get", boom)
+    assert rich_menu_link.reconcile(repo, MORNING) == {"checked": 0, "relinked": 0, "failed": 1}
+    assert posts == []
+
+
+def test_follow_links_menu_for_linked_member(linked, monkeypatch):
+    from app import main
+    repo, posts = linked
+    repo.upsert_member(Member(member_id="m6", name="副理事長", officer_role="副理事長",
+                              line_user_id="U_vp"))
+    monkeypatch.setattr(main, "get_repo", lambda: repo)
+    main._link_menu_on_follow("U_vp")
+    main._link_menu_on_follow("U_stranger")  # 未連携の人には何もしない
+    assert posts == ["https://api.line.me/v2/bot/user/U_vp/richmenu/rm_officer"]

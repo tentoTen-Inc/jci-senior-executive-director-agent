@@ -2,21 +2,27 @@
 
 メニューの ID は Settings.rich_menus（member / board / officer / officer_ops）に入っている
 （scripts/setup_rich_menu.py が作成して登録する）。未登録なら何もしない。
-LINE 連携の承認・招待コードでの連携・組織図の取込のときに呼ぶ。`_post` がテストのモック境界。
+LINE 連携の承認・招待コードでの連携・組織図の取込・友だち追加のときに呼ぶ。
+結びつけは、友だちでない間に試すと残らない・ブロックの解除で外れるなどで抜けることがあるので、
+1日1回、全員の今のメニューを確かめて結び直す（`reconcile`）。`_post`・`_get` がテストのモック境界。
 """
 from __future__ import annotations
 
+import json
 import logging
+import urllib.error
 import urllib.request
+from datetime import datetime
 
 from . import config, roles
 from .models import Member
 from .repository import Repository
-from .rich_menu import BOARD, MEMBER, OFFICER
+from .rich_menu import BOARD, MEMBER, OFFICER, OFFICER_OPS
 
 logger = logging.getLogger("jci-agent.rich_menu_link")
 
 API = "https://api.line.me/v2/bot/user"
+RECONCILE_HOUR = 8  # 1日1回、朝の tick で全員のメニューを確かめる
 
 
 def kind_for(member: Member) -> str:
@@ -34,6 +40,18 @@ def _post(url: str, token: str) -> None:
                                  headers={"Authorization": f"Bearer {token}"})
     with urllib.request.urlopen(req, timeout=10):
         pass
+
+
+def _get(url: str, token: str) -> str | None:
+    """会員に結びついているメニューの ID（無ければ None）。テストでモックする境界。"""
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as res:
+            return json.load(res).get("richMenuId")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None
+        raise
 
 
 def link(repo: Repository, member: Member) -> str | None:
@@ -61,3 +79,37 @@ def link_all(repo: Repository) -> dict[str, int]:
         if kind:
             counts[kind] = counts.get(kind, 0) + 1
     return counts
+
+
+def reconcile(repo: Repository, now: datetime) -> dict[str, int] | None:
+    """朝の tick で1日1回、連携済みの全員のメニューを確かめ、立場と違う人だけ結び直す。
+
+    五役は「運営」タブ（officer_ops）に切り替えた状態でも正しいとみなす。
+    """
+    if now.hour != RECONCILE_HOUR:
+        return None
+    menus = repo.get_settings().rich_menus
+    token = config.line_channel_access_token()
+    if not menus or not token:
+        return None
+    checked = relinked = failed = 0
+    for member in repo.list_members():
+        if not member.line_user_id:
+            continue
+        kind = kind_for(member)
+        ok = {menus.get(kind)} | ({menus.get(OFFICER_OPS)} if kind == OFFICER else set())
+        try:
+            current = _get(f"{API}/{member.line_user_id}/richmenu", token)
+        except Exception:  # noqa: BLE001 - 1人の失敗で他の人の確認を止めない
+            logger.warning("リッチメニューを確かめられませんでした: %s", member.member_id)
+            failed += 1
+            continue
+        checked += 1
+        if current in ok:
+            continue
+        if link(repo, member):
+            relinked += 1
+            logger.info("リッチメニューを結び直しました: %s → %s", member.member_id, kind)
+        else:
+            failed += 1
+    return {"checked": checked, "relinked": relinked, "failed": failed}

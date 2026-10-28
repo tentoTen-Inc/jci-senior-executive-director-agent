@@ -56,6 +56,7 @@ from . import (
     line_worker,
     proposal_submit,
     proposal_sync,
+    rich_menu_link,
 )
 from . import lake_api as lake_api_module
 from .admin_api import router as admin_router
@@ -336,10 +337,27 @@ def handle_group_text_message(user_id: str | None, text: str) -> list[Message]:
     return handle_member_text(repo, member, text, now=datetime.now(), in_group=True)
 
 
+def _link_menu_on_follow(user_id: str | None) -> None:
+    """連携済みの会員が友だち追加・ブロック解除したら、立場のメニューを結び直す。
+
+    友だちでない間に結んだメニューは残らないため（docs/liff-menu-design.md §2）。
+    """
+    if not user_id:
+        return
+    try:
+        repo = get_repo()
+        member = repo.get_member_by_line_user_id(user_id)
+        if member is not None:
+            rich_menu_link.link(repo, member)
+    except Exception:  # noqa: BLE001 - 歓迎メッセージは必ず返す
+        logger.exception("友だち追加時のメニューの結びつけに失敗しました")
+
+
 def handle_event(event) -> None:
     """単一の LINE イベントを処理する。"""
     if isinstance(event, FollowEvent):
         logger.info("follow event: userId=%s", event.source.user_id)
+        _link_menu_on_follow(event.source.user_id)
         reply(event.reply_token, WELCOME_TEXT)
     elif isinstance(event, MessageEvent) and isinstance(event.message, TextMessageContent):
         user_id = event.source.user_id
@@ -500,6 +518,12 @@ def tasks_tick():
     except Exception:  # noqa: BLE001 - 催促・取込を巻き込まない
         logger.exception("意見箱の処理に失敗しました")
         feedback_result = {"error": "feedback_failed"}
+    # リッチメニュー: 朝に1日1回、全員の今のメニューを確かめて立場と違う人を結び直す
+    try:
+        menus_result = rich_menu_link.reconcile(repo, now)
+    except Exception:  # noqa: BLE001 - tick 本体を止めない
+        logger.exception("リッチメニューの確認に失敗しました")
+        menus_result = {"error": "menus_failed"}
     # 取込・索引は時間がかかるので、会員に届く催促を送り終えてから行う。
     # ドライブの資料を取り込んでから索引する（同じ tick で新しい資料も検索できるように）
     lake_result = {"redact": redact_unsent(), "drive": drive_knowledge.sync(),
@@ -516,6 +540,7 @@ def tasks_tick():
         "planned": len(jobs), "results": results, "gmail": gmail_result, "gcal": gcal_result,
         "lake": lake_result, "posts": posts_result, "proposals": proposals_result,
         "feedback": feedback_result, "proposal_notices": proposal_notice_result,
+        "menus": menus_result,
     }
 
 
