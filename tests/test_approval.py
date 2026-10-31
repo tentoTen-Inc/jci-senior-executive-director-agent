@@ -20,12 +20,12 @@ def repo():
     set_repo(None)
 
 
-def make(stage=ProposalStage.sed_review):
+def make(stage=ProposalStage.submitted):
     return Proposal(proposal_id="p1", title="A", stage=stage)
 
 
-def test_approve_from_review_advances_to_goyaku(repo):
-    repo.upsert_proposal(make(ProposalStage.sed_review))
+def test_approve_from_submitted_advances_to_goyaku(repo):
+    repo.upsert_proposal(make(ProposalStage.submitted))
     res = client.post("/api/proposals/p1/approve", json={"comment": "OK"}, headers=IAP)
     assert res.status_code == 200
     body = res.json()
@@ -42,8 +42,8 @@ def test_approve_other_stage_keeps_stage(repo):
     assert res.json()["sed_approval"]["status"] == "approved"
 
 
-def test_return_sets_returned_and_back_to_submitted(repo):
-    repo.upsert_proposal(make(ProposalStage.sed_review))
+def test_return_sets_returned_and_back_to_entry(repo):
+    repo.upsert_proposal(make(ProposalStage.submitted))
     res = client.post(
         "/api/proposals/p1/return", json={"comment": "予算根拠を補足してください"}, headers=IAP
     )
@@ -51,7 +51,7 @@ def test_return_sets_returned_and_back_to_submitted(repo):
     body = res.json()
     assert body["sed_approval"]["status"] == "returned"
     assert body["sed_approval"]["comment"] == "予算根拠を補足してください"
-    assert body["stage"] == "submitted"
+    assert body["stage"] == "entry"  # 委員会が直して［提出する］を押し直す
     assert any(a.action == "proposal.return" for a in repo.list_audit())
 
 

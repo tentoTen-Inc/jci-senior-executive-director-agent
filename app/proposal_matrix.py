@@ -22,10 +22,10 @@ DEADLINE_KINDS: list[tuple[str, str]] = [
 ]
 
 #: 各締切区分を「完了」とみなせる最小ステージ。
-#: 例: エントリー締切は資料提出ステージ以降に進んでいれば達成済み。
+#: 例: エントリー締切・提出締切は資料提出ステージ以降に進んでいれば達成済み。
 _DONE_FROM: dict[str, ProposalStage] = {
     "entry": ProposalStage.submitted,
-    "submit": ProposalStage.sed_review,
+    "submit": ProposalStage.submitted,
     "deliver": ProposalStage.board,
 }
 

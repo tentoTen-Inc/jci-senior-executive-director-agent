@@ -39,9 +39,10 @@ def test_cell_states_from_real_deadlines():
         [
             # エントリー締切超過（stage=entry のまま）
             _prop("p1", "総務委員会", ProposalStage.entry, entry=NOW - timedelta(days=2)),
-            # 提出締切が2日後 → 間近
-            _prop("p2", "総務委員会", ProposalStage.submitted, submit=NOW + timedelta(days=2)),
-            # 配信締切が10日後 → 期限内
+            # エントリーのまま、提出締切が2日後 → 間近（エントリー締切は5日後 → 期限内）
+            _prop("p2", "総務委員会", ProposalStage.entry,
+                  entry=NOW + timedelta(days=5), submit=NOW + timedelta(days=2)),
+            # 資料提出済み。配信締切が10日後 → 期限内
             _prop("p3", "総務委員会", ProposalStage.submitted, deliver=NOW + timedelta(days=10)),
         ],
         now=NOW,
@@ -49,16 +50,17 @@ def test_cell_states_from_real_deadlines():
     row = m.rows[0]
     assert row.committee == "総務委員会"
     assert row.total == 3
-    # p2/p3 は submitted 以降なのでエントリーは完了、p1 のみ遅延
+    # p3 は submitted なのでエントリーは完了、p1 は遅延、p2 は期限内
     assert row.cells["entry"].counts == {
-        "done": 2, "overdue": 1, "soon": 0, "pending": 0, "unset": 0,
+        "done": 1, "overdue": 1, "soon": 0, "pending": 1, "unset": 0,
     }
     assert row.cells["entry"].state == "overdue"
     assert row.cells["entry"].samples == ["p1議案（〆7/23）"]
-    # 提出: p2=soon, p3=unset(締切未設定), p1=unset
+    # 提出: 資料提出に入れば済み（p3=done）、p2=soon、p1=unset(締切未設定)
     assert row.cells["submit"].state == "soon"
-    assert row.cells["submit"].counts["soon"] == 1
-    assert row.cells["submit"].counts["unset"] == 2
+    assert row.cells["submit"].counts == {
+        "done": 1, "overdue": 0, "soon": 1, "pending": 0, "unset": 1,
+    }
     # 配信: 誰も board 未到達。p3 のみ締切あり(期限内)
     assert row.cells["deliver"].counts == {
         "done": 0, "overdue": 0, "soon": 0, "pending": 1, "unset": 2,

@@ -634,8 +634,7 @@ class InferenceLog(BaseModel):
 # --------------------------------------------------------------------------- #
 class ProposalStage(StrEnum):
     entry = "entry"  # エントリー
-    submitted = "submitted"  # 資料提出
-    sed_review = "sed_review"  # 専務レビュー
+    submitted = "submitted"  # 資料提出（専務の確認待ちを兼ねる）
     goyaku = "goyaku"  # 五役会
     board = "board"  # 理事会上程
     decided = "decided"  # 審議結果
@@ -643,12 +642,16 @@ class ProposalStage(StrEnum):
     reported = "reported"  # 報告
     verified = "verified"  # 検証
 
+    @classmethod
+    def _missing_(cls, value: object) -> ProposalStage | None:
+        # 旧「専務レビュー」（2026-10-31 廃止）は資料提出として読む
+        return cls.submitted if value == "sed_review" else None
+
 
 # カンバンの表示順
 PROPOSAL_STAGE_ORDER = [
     ProposalStage.entry,
     ProposalStage.submitted,
-    ProposalStage.sed_review,
     ProposalStage.goyaku,
     ProposalStage.board,
     ProposalStage.decided,

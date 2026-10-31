@@ -52,7 +52,7 @@ def repo():
         candidates=[PollCandidate(candidate_id="c1", start=NOW + timedelta(days=10))],
         target_scope=TargetScope(kind=TargetScopeKind.all)))
     r.save_poll_response(PollResponse(poll_id="p1", line_user_id="U_chair", member_id="m_chair"))
-    for pid, committee, stage in [("pr1", "総務委員会", ProposalStage.sed_review),
+    for pid, committee, stage in [("pr1", "総務委員会", ProposalStage.submitted),
                                   ("pr2", "地域未来創造委員会", ProposalStage.entry)]:
         r.upsert_proposal(Proposal(proposal_id=pid, title=f"{committee}の3月例会",
                                    committee=committee, stage=stage,
@@ -87,7 +87,7 @@ def test_ask_button_shows_examples(repo):
 def test_proposals_by_role(repo):
     chair = _tap(repo, CHAIR, "委員会の議案")[0].text
     assert "総務委員会｜" in chair and "地域未来創造委員会" not in chair  # 自分の委員会だけ
-    assert "（専務確認）" in chair and "docs.google.com/document/d/pr1" in chair
+    assert "（資料提出）" in chair and "docs.google.com/document/d/pr1" in chair
     sed = _tap(repo, SED, "委員会の議案")[0].text
     assert "総務委員会｜" in sed and "地域未来創造委員会｜" in sed  # 五役は全委員会
     assert "理事メンバー" in _tap(repo, REG, "委員会の議案")[0].text

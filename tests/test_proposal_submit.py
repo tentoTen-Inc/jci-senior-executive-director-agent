@@ -23,6 +23,7 @@ from app.models import (
     ProposalDeadlines,
     ProposalStage,
     SchedulePoll,
+    SedApproval,
     SubmitPlan,
 )
 from app.repository import InMemoryRepository
@@ -156,6 +157,17 @@ def test_submit_notifies_sed_and_can_be_withdrawn(repo, pushed, monkeypatch):
     assert res.status_code == 200 and repo.get_proposal("ps1").stage == ProposalStage.entry
     assert len(pushed) == 1  # 取り消しは知らせない
 
+
+def test_resubmit_after_return_waits_for_sed_again(repo, pushed, monkeypatch):
+    """差し戻し（エントリーへ戻る）から出し直すと、専務の判断は未判断に戻る。"""
+    monkeypatch.setattr(liff_api, "datetime", _Clock(MORNING))
+    p = repo.get_proposal("ps1")
+    repo.upsert_proposal(p.model_copy(update={
+        "sed_approval": SedApproval(status="returned", comment="目標を数字で")}))
+    res = client.post("/liff/api/proposals/ps1/submit", headers=_auth("tok-chair"))
+    assert res.status_code == 200, res.text
+    p = repo.get_proposal("ps1")
+    assert p.stage == ProposalStage.submitted and p.sed_approval.status == "pending"
 
 @pytest.mark.parametrize("token, status", [
     ("tok-other", 404),  # 他の委員会の議案は見えない

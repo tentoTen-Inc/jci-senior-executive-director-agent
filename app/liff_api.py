@@ -550,7 +550,7 @@ def approvals_view(repo: Repository, member: Member) -> dict:
     review = [{"proposal_id": p.proposal_id, "committee": p.committee, "title": p.title,
                "url": p.storage_uri}
               for p in repo.list_proposals(status="open")
-              if p.stage == ProposalStage.sed_review and p.sed_approval.status == "pending"]
+              if p.stage == ProposalStage.submitted and p.sed_approval.status == "pending"]
     return {"requests": requests, "review": review,
             "can_decide": member.officer_role in line_link.APPROVER_ROLES}
 
