@@ -235,6 +235,9 @@ class Event(BaseModel):
     gcal_sync_state: GcalSyncState = GcalSyncState.pending
     gcal_synced_at: datetime | None = None
     gcal_error: str | None = None
+    # --- Meet（すべての予定に付けて自動録画, docs/calendar-design.md §4.5）---
+    meet_url: str | None = None
+    meet_auto_record: bool = False  # 自動録画をオンにできたか
 
 
 class LineGroup(BaseModel):

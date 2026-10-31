@@ -153,6 +153,21 @@ tick に相乗りし、`events.list(syncToken=…)` で差分だけを取る。�
 
 ---
 
+### 4.5 すべての予定に Meet（自動録画）（2026-10-31 専務の依頼）
+現地かオンラインかを見分けるのは手間なので、**カレンダーに載せる予定にはすべて Meet を付け、自動録画をオンにする**。
+
+- 呼び出しの主体: Meet はサービスアカウントでは作れないため、予定の持ち主（LOM 公式 Gmail `inawashiro.jc@gmail.com`）の
+  OAuth で Calendar API を呼ぶ（`gmail.is_configured()` なら持ち主、無ければ従来どおり calendar-sync を権限借用）。
+  OAuth は `scripts/gmail_oauth_setup.py --with-drive --with-send --with-calendar` で calendar.events と
+  meetings.space.settings を許可済み（2026-10-31）。アクセストークンは30分使い回す。
+- 作り方: 予定を作る・直すときに `conferenceData.createRequest`（requestId=`meet-<イベントID>`・hangoutsMeet）を付け、
+  `conferenceDataVersion=1` で呼ぶ。Meet がもう付いている（`Event.meet_url`）予定には頼まない。
+- 自動録画: 応答の `conferenceData.conferenceId`（会議コード）で Meet REST API v2 の `spaces/<コード>` を読み、
+  `config.artifactConfig.recordingConfig.autoRecordingGeneration=ON` に更新する。できたら `Event.meet_auto_record=true`。
+  失敗しても予定の反映は成功のまま（次の tick で録画の設定だけやり直す）。LOM 公式 Gmail は録画できる有料プラン。
+- 既存の予定: Meet・自動録画がまだの今後の予定は、tick（`retry_pending`）で近い順に1回20件まで付ける。
+- 中止した予定はカレンダーから消すので、Meet の記録も消す。
+
 ## 5. 操作の入口
 
 ### 5.1 管理画面（P5-1 / P5-2）

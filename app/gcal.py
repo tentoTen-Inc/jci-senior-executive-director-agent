@@ -1,5 +1,9 @@
 """Googleカレンダー API（鍵レス impersonation, docs/calendar-design.md §2）。
 
+Meet を付けるには予定の持ち主として呼ぶ必要がある（サービスアカウントでは会議を作れない）。
+LOM 公式 Gmail の OAuth（`gmail.is_configured()`。calendar.events と meetings.space.settings を
+許可済み）があればそちらで呼び、無ければ従来どおり calendar-sync を権限借用する（§4.5）。
+
 Cloud Run の実行SA(app-runtime)が calendar-sync を権限借用して Calendar API を呼ぶ。
 対象カレンダー（`inawashiro.jc@gmail.com`）は calendar-sync に「予定の変更」権限で共有済みの前提。
 `GCAL_CALENDAR_ID`（本番は `DEFAULT_CALENDAR_ID`）が未設定なら連携は無効。
@@ -11,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -23,6 +28,12 @@ GCAL_SYNC_SA = os.environ.get(
 )
 SCOPE = "https://www.googleapis.com/auth/calendar.events"
 API_BASE = "https://www.googleapis.com/calendar/v3"
+MEET_API_BASE = "https://meet.googleapis.com/v2"
+#: 会議を作る・読むときに付ける（無いと conferenceData は無視される）
+CONFERENCE_PARAMS = {"conferenceDataVersion": "1"}
+#: 持ち主のアクセストークン（1時間有効）を使い回す時間。予定ごとに交換しない
+OWNER_TOKEN_TTL = 30 * 60
+_owner_token: tuple[str, float] = ("", 0.0)
 TIMEZONE = "Asia/Tokyo"
 
 
@@ -49,7 +60,15 @@ def is_configured() -> bool:
 
 
 def _token() -> str:
-    """calendar-sync を impersonate したアクセストークンを取得する。"""
+    """予定の持ち主（LOM 公式 Gmail）の OAuth があればそれ、無ければ calendar-sync を借用する。"""
+    from . import gmail
+
+    if gmail.is_configured():
+        global _owner_token
+        token, at = _owner_token
+        if not token or time.monotonic() - at > OWNER_TOKEN_TTL:
+            _owner_token = (gmail._access_token(), time.monotonic())
+        return _owner_token[0]
     from google.auth import default, impersonated_credentials
     from google.auth.transport.requests import Request
 
@@ -92,11 +111,20 @@ def _request(method: str, url: str, body: dict | None = None) -> dict:
 
 
 def insert_event(body: dict) -> dict:
-    return _request("POST", _events_url(), body)
+    return _request("POST", _events_url(params=CONFERENCE_PARAMS), body)
 
 
 def patch_event(gcal_event_id: str, body: dict) -> dict:
-    return _request("PATCH", _events_url(gcal_event_id), body)
+    return _request("PATCH", _events_url(gcal_event_id, CONFERENCE_PARAMS), body)
+
+
+def enable_auto_recording(meeting_code: str) -> None:
+    """Meet の会議室を「主催者側の誰かが入ったら自動で録画」にする（Meet REST API v2）。"""
+    space = _request("GET", f"{MEET_API_BASE}/spaces/{urllib.parse.quote(meeting_code)}")
+    mask = "config.artifactConfig.recordingConfig.autoRecordingGeneration"
+    _request("PATCH", f"{MEET_API_BASE}/{space['name']}?updateMask={mask}",
+             {"config": {"artifactConfig": {"recordingConfig": {
+                 "autoRecordingGeneration": "ON"}}}})
 
 
 def delete_event(gcal_event_id: str) -> None:
