@@ -208,8 +208,9 @@ export default function Proposals() {
     () => [...new Set((items ?? []).map((p) => p.committee).filter((c): c is string => !!c))].sort(),
     [items]
   );
-  const shown = (items ?? []).filter((p) => !committee || p.committee === committee);
   const open = (items ?? []).filter((p) => p.status !== "closed");
+  // 閉じた議案（文書を削除・ゴミ箱へ移したもの）は段階の列に出さない
+  const shown = open.filter((p) => !committee || p.committee === committee);
   const waiting = open.filter((p) => p.stage === "sed_review").length;
   const overdue = open.filter((p) => nextDeadline(p)?.state === "overdue").length;
   const soon = open.filter((p) => nextDeadline(p)?.state === "soon").length;
