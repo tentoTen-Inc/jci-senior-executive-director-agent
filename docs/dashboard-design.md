@@ -81,10 +81,10 @@ SPA のルーティング（`/app` 配下）:
 ### 3.2 議案ライフサイクル（カンバン・目玉）
 ステージ列（Drive分析 §2/§11 の実運用に準拠）:
 ```
-[エントリー] [資料提出] [専務レビュー] [五役会] [理事会上程] [審議結果] [事業実施] [報告] [検証]
-   ●第1号        ●第3号       ●第2号                                              ●第N号
-   総務委         人材育成      コト創り
-   締切7/8        ⚠遅延        要確認2件
+[エントリー] [資料提出] [五役会] [理事会上程] [審議結果] [事業実施] [報告] [検証]
+   ●第1号        ●第3号    ●第2号                                    ●第N号
+   総務委         人材育成   コト創り
+   締切7/8        要確認
 ```
 - カードに: 議案名・委員会・担当・期限・遅延フラグ・レビュー状態
 - カード詳細: 形式チェック結果（必須項目欠落/全角英数）＋Gemini内容レビュー（要約・論点・要確認点）＋専務の承認/差戻し操作
@@ -109,7 +109,7 @@ proposals/{proposalId}
   committee: str                  # 提出委員会
   owner_member_id: str            # 担当者/委員長
   event_id: str | None            # 上程先の会議体イベント
-  stage: ProposalStage            # entry|submitted|sed_review|goyaku|board|decided|executing|reported|verified
+  stage: ProposalStage            # entry|submitted|goyaku|board|decided|executing|reported|verified
   doc_type: "事業計画書"|"事業報告書"|...   # テンプレ種別
   storage_uri: str | None         # Drive/GCSの資料参照
   deadlines: { entry, submit, deliver }    # 7/5/3日前ルール
@@ -119,7 +119,12 @@ proposals/{proposalId}
   history: [{ at, stage, by }]
   status: "open"|"closed"
 ```
-`ProposalStage`（StrEnum）= entry / submitted / sed_review / goyaku / board / decided / executing / reported / verified
+`ProposalStage`（StrEnum）= entry / submitted / goyaku / board / decided / executing / reported / verified
+
+専務レビュー（sed_review）は 2026-10-31 に廃止した（専務の依頼: 専務が見ているかどうかで段階を分けない）。
+- 資料提出が「専務の確認待ち」を兼ねる。専務が［承認］すると五役会へ進み、［差戻し］するとエントリーへ戻る（委員会が直して［提出する］を押し直す。出し直すと承認は未判断に戻る）。
+- 提出締切は資料提出に入れば「済み」（委員会別マトリクス・カードの次の締切）。
+- 保存済みの `sed_review` は資料提出として読む（`ProposalStage._missing_`。本番には0件だった）。
 
 ### 4.2 新規: `AuditLog`（監査ログ）
 ```

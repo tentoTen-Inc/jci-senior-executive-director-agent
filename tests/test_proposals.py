@@ -63,14 +63,23 @@ def test_stage_transition(repo):
     pid = client.post("/api/proposals", json={"title": "A"}, headers=IAP).json()["proposal_id"]
     res = client.post(
         f"/api/proposals/{pid}/stage",
-        json={"stage": ProposalStage.sed_review.value},
+        json={"stage": ProposalStage.goyaku.value},
         headers=IAP,
     )
     assert res.status_code == 200
-    assert res.json()["stage"] == "sed_review"
+    assert res.json()["stage"] == "goyaku"
     # history に追記
-    assert res.json()["history"][-1]["stage"] == "sed_review"
+    assert res.json()["history"][-1]["stage"] == "goyaku"
     assert any(a.action == "proposal.stage" for a in repo.list_audit())
+
+
+def test_legacy_sed_review_reads_as_submitted(repo):
+    """廃止した「専務レビュー」（sed_review）の保存値は資料提出として読む。"""
+    p = Proposal.model_validate({
+        "proposal_id": "old", "title": "A", "stage": "sed_review",
+        "history": [{"at": "2026-10-01T09:00:00", "stage": "sed_review"}]})
+    assert p.stage == ProposalStage.submitted
+    assert p.history[0].stage == ProposalStage.submitted
 
 
 def test_not_found():

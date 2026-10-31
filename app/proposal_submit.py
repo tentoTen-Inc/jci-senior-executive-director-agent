@@ -32,6 +32,7 @@ from .models import (
     ProposalAlert,
     ProposalHistory,
     ProposalStage,
+    SedApproval,
     SubmitPlan,
 )
 from .proposal_sync import SUMMARY_TYPE, blank_count
@@ -125,6 +126,8 @@ def submit(repo: Repository, member: Member, proposal_id: str, now: datetime) ->
                                "委員長です。")
     if p.stage != ProposalStage.entry:
         raise SubmitError(409, "エントリーの議案だけ提出できます。画面を開き直してください。")
+    if p.sed_approval.status == "returned":  # 差し戻しから出し直したら、もう一度専務が判断する
+        p = p.model_copy(update={"sed_approval": SedApproval()})
     p = _change(repo, member, p, ProposalStage.submitted, now, "proposal.submit")
     _notify_submitted(repo, p, now)
     return p

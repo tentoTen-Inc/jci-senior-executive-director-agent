@@ -30,8 +30,8 @@ NOT_BOARD_TEXT = (
 )
 STAGE_LABELS = {
     ProposalStage.entry: "エントリー", ProposalStage.submitted: "資料提出",
-    ProposalStage.sed_review: "専務確認", ProposalStage.goyaku: "五役会",
-    ProposalStage.board: "理事会上程", ProposalStage.decided: "審議結果",
+    ProposalStage.goyaku: "五役会", ProposalStage.board: "理事会上程",
+    ProposalStage.decided: "審議結果",
     ProposalStage.executing: "事業実施", ProposalStage.reported: "報告",
     ProposalStage.verified: "検証",
 }
@@ -129,7 +129,7 @@ def approvals_message(repo: Repository, member: Member) -> TextMessage:
     lines += [f"・{r.get('member_name') or '（会員未選択）'} ← "
               f"{r.get('display_name') or 'LINE名なし'}" for r in requests] or ["・ありません"]
     review = [p for p in repo.list_proposals(status="open")
-              if p.stage == ProposalStage.sed_review and p.sed_approval.status == "pending"]
+              if p.stage == ProposalStage.submitted and p.sed_approval.status == "pending"]
     lines.append("\n【専務確認待ちの議案】")
     lines += [f"・{p.committee or ''}｜{p.title}" for p in review] or ["・ありません"]
     return TextMessage(text="\n".join(lines) + f"\n\n承認は管理画面から: {ADMIN_URL}")

@@ -69,7 +69,7 @@ def repo(monkeypatch, pushed):
                          datetime_start=FUTURE, status=EventStatus.open))
     r.upsert_attendance(Attendance(event_id="ev_nov", member_id="m_chair",
                                    status=AttendanceStatus.出席))
-    for pid, committee, stage in [("pr1", "総務委員会", ProposalStage.sed_review),
+    for pid, committee, stage in [("pr1", "総務委員会", ProposalStage.submitted),
                                   ("pr2", "地域未来創造委員会", ProposalStage.entry)]:
         r.upsert_proposal(Proposal(
             proposal_id=pid, title=f"{committee}の3月例会", committee=committee, stage=stage,
@@ -131,7 +131,7 @@ def test_proposals_by_role(repo):
     chair = client.get("/liff/api/proposals", headers=_auth("tok-chair")).json()
     assert [p["proposal_id"] for p in chair["proposals"]] == ["pr1"]  # 自分の委員会だけ
     pr1 = chair["proposals"][0]
-    assert pr1["stage"] == "専務確認" and pr1["can_work"] is True
+    assert pr1["stage"] == "資料提出" and pr1["can_work"] is True
     assert pr1["feedback"][0]["text"] == "予算の根拠を"
     sed = client.get("/liff/api/proposals", headers=_auth("tok-sed")).json()
     assert {p["proposal_id"] for p in sed["proposals"]} == {"pr1", "pr2"}

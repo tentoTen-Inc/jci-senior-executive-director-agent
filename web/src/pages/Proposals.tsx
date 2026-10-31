@@ -80,8 +80,7 @@ type Tone = "green" | "gray" | "red" | "amber" | "blue";
 
 const STAGES: { key: string; label: string; hint: string }[] = [
   { key: "entry", label: "エントリー", hint: "委員会が議案を出すと宣言した段階" },
-  { key: "submitted", label: "資料提出", hint: "議案書が届いた段階" },
-  { key: "sed_review", label: "専務レビュー", hint: "専務が内容を確認する段階" },
+  { key: "submitted", label: "資料提出", hint: "議案書が届き、専務の確認を待つ段階" },
   { key: "goyaku", label: "五役会", hint: "五役会で協議する段階" },
   { key: "board", label: "理事会上程", hint: "理事会に出す段階" },
   { key: "decided", label: "審議結果", hint: "理事会の結果が出た段階" },
@@ -95,7 +94,7 @@ const stageLabel = (key: string) => STAGES[STAGE_INDEX[key]]?.label ?? "（段�
 // 締切区分と、それを「済み」とみなす段階（app/proposal_matrix.py と同じ考え方）
 const DEADLINE_KINDS: { key: keyof Deadlines; label: string; doneFrom: string }[] = [
   { key: "entry", label: "エントリー", doneFrom: "submitted" },
-  { key: "submit", label: "資料提出", doneFrom: "sed_review" },
+  { key: "submit", label: "資料提出", doneFrom: "submitted" },
   { key: "deliver", label: "配信", doneFrom: "board" },
 ];
 const SOON_DAYS = 3;
@@ -211,7 +210,7 @@ export default function Proposals() {
   const open = (items ?? []).filter((p) => p.status !== "closed");
   // 閉じた議案（文書を削除・ゴミ箱へ移したもの）は段階の列に出さない
   const shown = open.filter((p) => !committee || p.committee === committee);
-  const waiting = open.filter((p) => p.stage === "sed_review").length;
+  const waiting = open.filter((p) => p.stage === "submitted" && (p.sed_approval?.status ?? "pending") === "pending").length;
   const overdue = open.filter((p) => nextDeadline(p)?.state === "overdue").length;
   const soon = open.filter((p) => nextDeadline(p)?.state === "soon").length;
 
@@ -254,7 +253,7 @@ export default function Proposals() {
           value={waiting}
           unit="件"
           highlight={waiting > 0}
-          sub={waiting ? "「専務レビュー」の列から確認できます" : "ありません"}
+          sub={waiting ? "「資料提出」の列から確認できます" : "ありません"}
         />
         <Stat label="締切を過ぎた" value={overdue} unit="件" sub={overdue ? "カードに赤い印が付いています" : "ありません"} />
         <Stat label={`${SOON_DAYS}日以内に締切`} value={soon} unit="件" />
@@ -271,7 +270,7 @@ export default function Proposals() {
               </div>
             }
           >
-            <p>議案は「エントリー → 資料提出 → 専務レビュー → 五役会 → 理事会上程 → 審議結果 → 事業実施 → 報告 → 検証」の順に進みます。</p>
+            <p>議案は「エントリー → 資料提出 → 五役会 → 理事会上程 → 審議結果 → 事業実施 → 報告 → 検証」の順に進みます。</p>
             <p className="mt-1">議案書が Google ドライブのフォルダにあれば、まとめて取り込めます。</p>
           </EmptyState>
         </Panel>
@@ -299,7 +298,7 @@ export default function Proposals() {
             <div className="flex min-w-max gap-3">
               {STAGES.map((s) => {
                 const cards = shown.filter((p) => p.stage === s.key);
-                const mine = s.key === "sed_review";
+                const mine = s.key === "submitted";
                 return (
                   <div
                     key={s.key}
@@ -518,7 +517,7 @@ function Detail({
     const ok = await confirm({
       title: "この議案を承認しますか？",
       body:
-        p.stage === "sed_review" ? (
+        p.stage === "submitted" ? (
           <>承認すると「五役会」の段階へ進みます。{comment.trim() && <>コメント「{comment.trim()}」も記録します。</>}</>
         ) : (
           <>いまの段階（{stageLabel(p.stage)}）はそのままで、承認したことを記録します。</>
@@ -534,7 +533,7 @@ function Detail({
       title: "この議案を差し戻しますか？",
       body: (
         <>
-          差し戻すと「資料提出」の段階に戻ります。
+          差し戻すと「エントリー」の段階に戻ります（委員会が直して出し直します）。
           {comment.trim() ? <>コメント「{comment.trim()}」を記録します。</> : <>直してほしい点をコメントに書いておくと記録に残ります。</>}
           <br />※ 委員会への連絡は自動では送られません。
         </>

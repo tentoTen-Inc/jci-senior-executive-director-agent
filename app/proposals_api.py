@@ -221,7 +221,7 @@ def approve_proposal(
     payload: ApprovalAction,
     x_goog_authenticated_user_email: str | None = Header(default=None),
 ):
-    """専務理事が議案を承認。承認時はレビュー段階なら五役会へ進める。"""
+    """専務理事が議案を承認。資料提出の段階なら五役会へ進める。"""
     repo = get_repo()
     p = repo.get_proposal(proposal_id)
     if p is None:
@@ -229,7 +229,7 @@ def approve_proposal(
     actor = _actor(x_goog_authenticated_user_email)
     now = datetime.now()
     p.sed_approval = SedApproval(status="approved", by=actor, at=now, comment=payload.comment)
-    if p.stage == ProposalStage.sed_review:
+    if p.stage == ProposalStage.submitted:
         p.stage = ProposalStage.goyaku
         p.history.append(ProposalHistory(at=now, stage=p.stage, by=actor))
     repo.upsert_proposal(p)
@@ -243,7 +243,7 @@ def return_proposal(
     payload: ApprovalAction,
     x_goog_authenticated_user_email: str | None = Header(default=None),
 ):
-    """専務理事が議案を差戻し。資料提出段階へ戻す。"""
+    """専務理事が議案を差戻し。エントリーへ戻す（委員会が直して［提出する］を押し直す）。"""
     repo = get_repo()
     p = repo.get_proposal(proposal_id)
     if p is None:
@@ -251,7 +251,7 @@ def return_proposal(
     actor = _actor(x_goog_authenticated_user_email)
     now = datetime.now()
     p.sed_approval = SedApproval(status="returned", by=actor, at=now, comment=payload.comment)
-    p.stage = ProposalStage.submitted
+    p.stage = ProposalStage.entry
     p.history.append(ProposalHistory(at=now, stage=p.stage, by=actor))
     repo.upsert_proposal(p)
     write_audit(
