@@ -641,16 +641,20 @@ function DetailDrawer({
   const [formErr, setFormErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [filter, setFilter] = useState<"all" | "unanswered" | "answered">("all");
+  const [targetIds, setTargetIds] = useState<Set<string>>(new Set());
   const ref = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     try {
       const [ev, at] = await Promise.all([
         api<{ event: EventRow; summary: Summary }>(`/events/${eventId}`),
-        api<{ attendances: Attendance[]; summary: Summary }>(`/events/${eventId}/attendances`),
+        api<{ attendances: Attendance[]; summary: Summary; target_member_ids: string[] }>(
+          `/events/${eventId}/attendances`
+        ),
       ]);
       setEvent(ev.event);
       setAtt(at.attendances);
+      setTargetIds(new Set(at.target_member_ids));
       setSummary(at.summary);
       setErr(null);
     } catch (e) {
@@ -726,7 +730,8 @@ function DetailDrawer({
 
   const attByMember = Object.fromEntries(att.map((a) => [a.member_id, a]));
   const unansweredIds = new Set(summary?.unanswered_member_ids ?? []);
-  const rows = members.filter((m) => {
+  // 対象者だけを並べる（五役・理事会などは対象が決まっているので全員は出さない）
+  const rows = members.filter((m) => targetIds.has(m.member_id)).filter((m) => {
     const st = attByMember[m.member_id]?.status ?? "未回答";
     if (filter === "unanswered") return unansweredIds.has(m.member_id);
     if (filter === "answered") return st !== "未回答";
@@ -886,7 +891,7 @@ function DetailDrawer({
                       value={filter}
                       onChange={setFilter}
                       options={[
-                        { value: "all", label: "すべて" },
+                        { value: "all", label: `対象者 ${summary.total_targets}` },
                         { value: "unanswered", label: `未回答 ${summary.unanswered}` },
                         { value: "answered", label: "回答済み" },
                       ]}
