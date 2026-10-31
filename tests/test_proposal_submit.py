@@ -302,10 +302,29 @@ def test_overdue_alert_goes_to_supervising_vp_with_date_picker(repo, pushed):
     assert (button.type, button.data, button.mode) == ("datetimepicker", "psp|ps1", "date")
     assert button.min == "2026-11-01"
     digest = next(text for t, text in pushed if text.startswith("【提出締切】"))
-    assert "担当副理事長への連絡: 副理事長 次郎さんに送信済み" in digest
+    assert "担当への連絡: 副理事長 次郎さんに送信済み" in digest
     pushed.clear()
     assert proposal_submit.process(repo, AFTER + timedelta(hours=1))["overdue"] == 0
     assert pushed == []
+
+
+def test_overdue_alert_for_budget_goes_to_owner(repo, pushed):
+    """委員会の外の議案（予算書）は、担当者（理事長）に聞く。専務への知らせに空欄の数は出さない。"""
+    repo.upsert_member(Member(member_id="m_pres", name="理事長 五郎", line_user_id="U_pres",
+                              officer_role="理事長"))
+    repo.upsert_proposal(Proposal(
+        proposal_id="pb", title="2027年度 予算（案）", committee="執行部", doc_type="予算書",
+        owner_member_id="m_pres", meeting_poll_id="poll_08649098fc",
+        deadlines=ProposalDeadlines(submit=DEADLINE)))
+    _arm(repo)
+    proposal_submit.process(repo, AFTER)
+    [(to, alert)] = [(t, text) for t, text in pushed if text.startswith("【未提出】執行部")]
+    assert to == "U_pres"
+    assert alert.startswith("【未提出】執行部「2027年度 予算（案）」の提出締切")
+    digest = next(text for t, text in pushed if text.startswith("【提出締切】"))
+    assert ("・執行部「2027年度 予算（案）」: 未提出\n"
+            "  担当への連絡: 理事長 五郎さんに送信済み") in digest
+    assert proposal_submit.can_answer_plan(repo.get_member("m_pres"), repo.get_proposal("pb"))
 
 
 @pytest.mark.parametrize("set_at", [None, DEADLINE + timedelta(hours=1)])
