@@ -66,6 +66,13 @@ def test_update_attendance_and_summary():
     assert summary["attendance_rate"] == 0.5
 
 
+def test_attendances_lists_only_target_members():
+    """会員ごとの回答は対象者だけ（五役・理事会など対象が決まった予定で全員を出さない）。"""
+    eid = create_event(target_scope={"kind": "custom", "value": ["m2"]})["event_id"]
+    res = client.get(f"/admin/events/{eid}/attendances").json()
+    assert res["target_member_ids"] == ["m2"]
+    assert res["summary"]["total_targets"] == 1
+
 def test_csv_export():
     ev = create_event()
     eid = ev["event_id"]

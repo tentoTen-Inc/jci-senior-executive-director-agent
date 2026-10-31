@@ -300,12 +300,15 @@ class AttendanceUpdate(BaseModel):
 
 @router.get("/events/{event_id}/attendances")
 def list_attendances(event_id: str):
+    """出欠と集計。会員ごとの回答は対象者（`target_member_ids`）だけを並べる。"""
     repo = get_repo()
-    if repo.get_event(event_id) is None:
+    event = repo.get_event(event_id)
+    if event is None:
         raise HTTPException(status_code=404, detail="event not found")
     return {
         "attendances": repo.list_attendances(event_id),
         "summary": aggregate(repo, event_id),
+        "target_member_ids": [m.member_id for m in resolve_targets(repo, event)],
     }
 
 
