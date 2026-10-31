@@ -174,13 +174,28 @@ def test_decide_creates_event_and_notifies(repo, pushed):
     assert event.title == "第2回五役予定者会議"
     assert event.fiscal_year == 2027
     assert event.datetime_start.isoformat() == "2026-11-06T19:00:00"
-    assert event.status == "draft"
+    assert event.status == "open"  # 下書きにしない（予定と出欠にすぐ出る）
     poll = repo.get_poll(poll_id)
     assert poll.status == PollStatus.decided and poll.event_id == event.event_id
     assert "11月6日(金) 19:00〜" in pushed[0][1][0].text
     # 二重に決定しない
     assert admin.post(f"/api/polls/{poll_id}/decide",
                       json={"candidate_id": "c1"}).status_code == 409
+
+
+def test_decide_carries_answers_to_attendance(repo, pushed):
+    """決定した候補日への回答を出欠に写す。○=出席・×=欠席・△=未回答（コメントはメモに）。"""
+    poll_id = _create()["poll"]["poll_id"]
+    _answer(poll_id, "tok-sed", {"c1": "ng", "c2": "ok"}, comment="19:30から")
+    _answer(poll_id, "tok-a", {"c1": "ok", "c2": "maybe"}, member_id="m5")
+    _answer(poll_id, "tok-b", {"c1": "ok", "c2": "ng"}, member_id="m3")
+    event_id = admin.post(f"/api/polls/{poll_id}/decide",
+                          json={"candidate_id": "c2"}).json()["event"]["event_id"]
+    sed, vp, pres = (repo.get_attendance(event_id, m) for m in ("m2", "m5", "m3"))
+    assert sed.status == "出席" and sed.free_text == "日程調整のコメント: 19:30から"
+    assert sed.history[-1].by == "日程調整" and sed.responded_at is not None
+    assert vp.status == "未回答" and vp.responded_at is None  # △は本人に答えてもらう
+    assert pres.status == "欠席"
 
 
 def test_liff_page_embeds_liff_id(repo, monkeypatch):
