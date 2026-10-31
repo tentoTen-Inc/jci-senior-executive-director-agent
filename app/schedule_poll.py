@@ -27,6 +27,9 @@ from .audit import write_audit
 from .calendar_sync import push_event
 from .jpdate import month_day_time, weekday
 from .models import (
+    Attendance,
+    AttendanceHistory,
+    AttendanceStatus,
     Event,
     EventStatus,
     LineGroup,
@@ -450,9 +453,38 @@ def remind(repo: Repository, poll: SchedulePoll, actor: str, now: datetime) -> l
     return pending
 
 
+#: 決定した候補日への回答 → 出欠。△は決めつけず未回答のまま（本人に答えてもらう）
+POLL_TO_ATTENDANCE = {PollAnswer.ok: AttendanceStatus.出席, PollAnswer.ng: AttendanceStatus.欠席}
+POLL_BY = "日程調整"
+
+
+def carry_answers(repo: Repository, poll: SchedulePoll, event: Event, now: datetime) -> int:
+    """日程調整の回答を、決まった予定の出欠に写す（LINE 連携済みの回答だけ）。
+
+    ○ → 出席・× → 欠席。△は未回答のまま。コメント（遅れる等）は出欠のメモに残す。
+    すでに出欠がある会員（本人が答え直した等）は上書きしない。写した件数を返す。
+    """
+    count = 0
+    for r in repo.list_poll_responses(poll.poll_id):
+        answer = r.answers.get(poll.decided_candidate_id or "")
+        if not r.member_id or answer is None or repo.get_attendance(event.event_id, r.member_id):
+            continue
+        status = POLL_TO_ATTENDANCE.get(answer, AttendanceStatus.未回答)
+        repo.upsert_attendance(Attendance(
+            event_id=event.event_id, member_id=r.member_id, status=status,
+            free_text=f"日程調整のコメント: {r.comment}" if r.comment else None,
+            responded_at=(r.updated_at or now) if status != AttendanceStatus.未回答 else None,
+            history=[AttendanceHistory(at=now, status=status, by=POLL_BY)]))
+        count += 1
+    return count
+
+
 def decide(repo: Repository, poll: SchedulePoll, candidate_id: str, actor: str, now: datetime,
            *, notify: bool = True) -> tuple[SchedulePoll, Event]:
-    """候補日で決定し、イベント（下書き）を作ってカレンダーへ登録、グループへ連絡する。"""
+    """候補日で決定し、イベント（受付中）を作ってカレンダーへ登録、グループへ連絡する。
+
+    日程調整の回答はそのまま出欠に写す（もう一度出欠を聞かない）。
+    """
     if poll.status == PollStatus.decided:
         raise PollError(409, "すでに決定済みです。")
     candidate = poll.candidate(candidate_id)
@@ -462,7 +494,7 @@ def decide(repo: Repository, poll: SchedulePoll, candidate_id: str, actor: str, 
         event_id=f"ev_{uuid.uuid4().hex[:10]}", type=poll.event_type, title=poll.title,
         datetime_start=candidate.start, datetime_end=candidate.end, location=poll.location,
         target_scope=poll.target_scope, fiscal_year=poll.fiscal_year,
-        status=EventStatus.draft, updated_at=now,
+        status=EventStatus.open, updated_at=now,
     )
     repo.upsert_event(event)
     event = push_event(repo, event)
@@ -470,6 +502,7 @@ def decide(repo: Repository, poll: SchedulePoll, candidate_id: str, actor: str, 
                                    "decided_candidate_id": candidate_id,
                                    "event_id": event.event_id})
     repo.save_poll(poll)
+    carry_answers(repo, poll, event, now)
     write_audit(repo, actor=actor, action="poll.decide", target=poll.poll_id,
                 detail=f"{poll.title} {candidate_label(candidate.start, candidate.end)}")
     if notify:
