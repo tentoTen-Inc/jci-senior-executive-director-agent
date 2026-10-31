@@ -30,23 +30,27 @@ class FakeCalendar:
         self.calls: list[tuple[str, str, dict | None]] = []
         self.events: dict[str, dict] = {}
         self.fail_with: gcal.GcalError | None = None
+        self.meet_calls: list[tuple[str, str, dict | None]] = []
+        self.meet_fail = False
         self._seq = 0
 
     def __call__(self, method: str, url: str, body: dict | None = None) -> dict:
+        if url.startswith(gcal.MEET_API_BASE):
+            return self._meet(method, url, body)
         self.calls.append((method, url, body))
         if self.fail_with is not None:
             raise self.fail_with
-        event_id = url.rsplit("/events", 1)[1].lstrip("/") or None
+        event_id = url.split("?")[0].rsplit("/events", 1)[1].lstrip("/") or None
         if method == "POST":
             self._seq += 1
             new_id = f"g{self._seq}"
-            self.events[new_id] = body
-            return {"id": new_id, "etag": f'"etag-{new_id}-1"'}
+            self.events[new_id] = self._conference(new_id, body, {})
+            return {"id": new_id, "etag": f'"etag-{new_id}-1"', **self._meet_of(new_id)}
         if method == "PATCH":
             if event_id not in self.events:
                 raise gcal.GcalError("not found", 404)
-            self.events[event_id] = body
-            return {"id": event_id, "etag": f'"etag-{event_id}-2"'}
+            self.events[event_id] = self._conference(event_id, body, self.events[event_id])
+            return {"id": event_id, "etag": f'"etag-{event_id}-2"', **self._meet_of(event_id)}
         if method == "DELETE":
             self.events.pop(event_id, None)
             return {}
@@ -54,6 +58,31 @@ class FakeCalendar:
 
     def methods(self) -> list[str]:
         return [c[0] for c in self.calls]
+
+    # 会議（Meet）: createRequest があれば作る。無ければ前の会議をそのまま残す
+    def _conference(self, event_id: str, body: dict, old: dict) -> dict:
+        stored = dict(body)
+        if "conferenceData" in body:
+            assert "?conferenceDataVersion=1" in self.calls[-1][1]
+            stored["conference"] = f"abc-{event_id}"
+        elif "conference" in old:
+            stored["conference"] = old["conference"]
+        return stored
+
+    def _meet_of(self, event_id: str) -> dict:
+        code = self.events[event_id].get("conference")
+        return {"hangoutLink": f"https://meet.google.com/{code}",
+                "conferenceData": {"conferenceId": code}} if code else {}
+
+    def _meet(self, method: str, url: str, body: dict | None) -> dict:
+        self.meet_calls.append((method, url, body))
+        if self.meet_fail:
+            raise gcal.GcalError("Meet API 403", 403)
+        if method == "GET":
+            return {"name": f"spaces/S-{url.rsplit('/', 1)[1]}"}
+        assert body == {"config": {"artifactConfig": {"recordingConfig": {
+            "autoRecordingGeneration": "ON"}}}}
+        return {}
 
 
 @pytest.fixture
@@ -205,6 +234,61 @@ def test_retry_pending_noop_when_not_configured(repo, monkeypatch):
     monkeypatch.delenv("GCAL_CALENDAR_ID", raising=False)
     assert calendar_sync.retry_pending(repo, datetime.now()) is None
 
+
+
+# --------------------------------------------------------------------------- #
+# Meet（すべての予定に付けて自動録画, docs/calendar-design.md §4.5）
+# --------------------------------------------------------------------------- #
+def test_push_adds_meet_with_auto_recording_once(repo, fake):
+    synced = calendar_sync.push_event(repo, repo.get_event("ev1"))
+    req = fake.calls[0][2]["conferenceData"]["createRequest"]
+    assert req == {"requestId": "meet-ev1", "conferenceSolutionKey": {"type": "hangoutsMeet"}}
+    assert synced.meet_url == "https://meet.google.com/abc-g1" and synced.meet_auto_record
+    assert [m for m, _, _ in fake.meet_calls] == ["GET", "PATCH"]
+    assert "spaces/S-abc-g1?updateMask=config.artifactConfig.recordingConfig" \
+        in fake.meet_calls[1][1]
+    # 2回目以降は会議を頼まず、録画の設定もし直さない
+    again = calendar_sync.push_event(repo, synced.model_copy(update={"title": "臨時理事会"}))
+    assert "conferenceData" not in fake.calls[1][2]
+    assert again.meet_url == synced.meet_url and len(fake.meet_calls) == 2
+
+
+def test_auto_recording_failure_keeps_sync_and_retries(repo, fake):
+    fake.meet_fail = True
+    synced = calendar_sync.push_event(repo, repo.get_event("ev1"))
+    assert synced.gcal_sync_state == GcalSyncState.synced
+    assert synced.meet_url and not synced.meet_auto_record
+    fake.meet_fail = False
+    calendar_sync.retry_pending(repo, datetime.now())  # 次の tick で録画だけ設定し直す
+    event = repo.get_event("ev1")
+    assert event.meet_auto_record and "conferenceData" not in fake.calls[-1][2]
+
+
+def test_retry_pending_backfills_meet_on_upcoming_events(repo, fake, monkeypatch):
+    monkeypatch.setattr(calendar_sync, "MEET_BACKFILL_PER_TICK", 2)
+    for i in range(3):  # Meet 導入前に反映済みの予定
+        repo.upsert_event(Event(
+            event_id=f"old{i}", type=EventType.例会, title=f"例会{i}",
+            datetime_start=FUTURE + timedelta(days=i + 1), status=EventStatus.open,
+            gcal_event_id=f"g-old{i}", gcal_sync_state=GcalSyncState.synced))
+        fake.events[f"g-old{i}"] = {}
+    repo.upsert_event(Event(
+        event_id="stop", type=EventType.例会, title="中止", datetime_start=FUTURE,
+        status=EventStatus.cancelled, gcal_sync_state=GcalSyncState.synced))
+    summary = calendar_sync.retry_pending(repo, datetime.now())
+    assert summary["retried"] == 3  # 未反映の ev1 ＋ Meet なしの近い2件（上限）
+    assert repo.get_event("old0").meet_url and repo.get_event("old1").meet_auto_record
+    assert repo.get_event("old2").meet_url is None and repo.get_event("stop").meet_url is None
+    calendar_sync.retry_pending(repo, datetime.now())
+    assert repo.get_event("old2").meet_url
+    assert calendar_sync.retry_pending(repo, datetime.now())["retried"] == 0
+
+
+def test_cancel_drops_meet(repo, fake):
+    synced = calendar_sync.push_event(repo, repo.get_event("ev1"))
+    result = calendar_sync.push_event(
+        repo, synced.model_copy(update={"status": EventStatus.cancelled}))
+    assert result.meet_url is None and not result.meet_auto_record
 
 # --------------------------------------------------------------------------- #
 # 管理API
