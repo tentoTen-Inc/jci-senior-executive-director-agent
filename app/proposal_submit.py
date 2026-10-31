@@ -188,9 +188,10 @@ def deadline_text(repo: Repository, proposals: list[Proposal]) -> str:
         lines = [f"■{meeting}", f"提出締切 {month_day_time(due)}・提出済み {done}/{len(items)}"]
         for p in sorted(items, key=lambda p: (not submitted(p), p.committee or "")):
             state = "提出済み" if submitted(p) else "未提出"
-            lines.append(f"・{doc_label(p)}: {state}・空欄 {blank_count(p)}欄")
+            blanks = f"・空欄 {blank_count(p)}欄" if p.sections else ""  # 予算書などは欄を読まない
+            lines.append(f"・{doc_label(p)}: {state}{blanks}")
             if not submitted(p):
-                lines.append(f"  担当副理事長への連絡: {alert_status(p)}")
+                lines.append(f"  担当への連絡: {alert_status(p)}")
             if p.storage_uri:
                 lines.append(f"  {p.storage_uri}")
         blocks.append("\n".join(lines))
@@ -240,8 +241,10 @@ def supervisors(repo: Repository, committee: str) -> list[Member]:
 
 
 def _alert_targets(repo: Repository, p: Proposal) -> list[Member]:
-    """知らせる相手。担当副理事長がいなければ専務理事。"""
-    return supervisors(repo, p.committee or "") or [
+    """知らせる相手。担当副理事長 → 議案の担当者（予算など委員会の外の議案）→ 専務理事。"""
+    owner = repo.get_member(p.owner_member_id) if p.owner_member_id else None
+    return supervisors(repo, p.committee or "") or (
+        [owner] if owner and owner.status == MemberStatus.active else []) or [
         m for m in repo.list_members()
         if m.officer_role in NOTIFY_ROLES and m.status == MemberStatus.active]
 
@@ -344,7 +347,7 @@ def send_overdue_alert(repo: Repository, p: Proposal, now: datetime) -> int:
 
 
 def alert_status(p: Proposal) -> str:
-    """締切の記入状況に添える、担当副理事長への連絡状況。"""
+    """締切の記入状況に添える、担当（副理事長・議案の担当者）への連絡状況。"""
     if not p.alerts:
         return "未連絡"
     last_key = p.alerts[-1].key
